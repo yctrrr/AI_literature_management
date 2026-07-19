@@ -1,4 +1,4 @@
-# AI Literature Crawl
+# AI Literature Management
 
 <!-- README-I18N:START -->
 
@@ -6,196 +6,182 @@
 
 <!-- README-I18N:END -->
 
-## Overview
-
-AI Literature Crawl is an automated workflow for collecting Nature-platform literature. It discovers candidate articles from configurable feeds and searches, filters by journal title, downloads article PDFs and the first supplementary file when available, classifies papers into a local topic taxonomy with DeepSeek, and appends summaries to a cumulative Markdown file.
-
-The default configuration is tuned for air quality, climate change, and energy transition literature.
+AI Literature Management is a local-first workflow for discovering, downloading, organizing, locating, summarizing, and citing academic literature. The automated crawler currently targets Nature-platform articles, while bundled agent skills support broader DOI, arXiv, publisher, local-library, Zotero, and DOCX workflows.
 
 ## Features
 
-- Discovers candidates from Nature feeds/article lists first.
-- Uses Nature search as a controlled fallback when feed results are insufficient.
-- Filters candidates before the run limit is applied, using `nature.journal_name_required_term`.
-- Downloads only articles with accessible PDFs.
-- Prioritizes the real Nature download button over fallback PDF metadata links.
-- Downloads the first supplementary/additional file when it is a real downloadable file.
-- Names PDFs as `Journal-FirstAuthor-Year-Title.pdf`.
-- Names supplements as `Supp-Journal-FirstAuthor-Year-Title.<ext>`.
-- Uses DeepSeek V4 Pro through an OpenAI-compatible API.
-- Classifies each paper into folders.
-- Avoids duplicate downloads using DOI/URL metadata.
-- Skips unreadable PDF pages during text extraction instead of stopping the whole run.
-- Generates EndNote import files where the main PDF and matching `Supp-*` files are attached to the same record.
-- Supports Windows Task Scheduler for weekly runs.
+- Discovers Nature articles from configurable feeds and controlled search fallback.
+- Filters journal names before applying the per-run article limit.
+- Downloads accessible PDFs and the first real supplementary attachment.
+- Separates crawl/EndNote export from LLM classification and summary generation.
+- Places new papers in `_pending_summary` until the summary task processes them.
+- Maintains a structured `summary_index.json` and categorized Markdown summary.
+- Produces recent or full RIS/ENW import packages and attachment reports.
+- Avoids duplicate downloads using DOI, source URL, metadata, and filenames.
+- Includes four reusable agent skills for ingestion, local search, Zotero linked imports, and citation-safe DOCX writing.
+- Uses initialized local configuration instead of machine-specific default paths.
 
-## Paths
-
-- Project: this repository root
-- Category source: `./example_taxonomy` by default
-- Archive root: `./data/archive` by default
-
-These paths are configurable in `config.yaml`.
-
-## Project Structure
+## Architecture
 
 ```text
-literature_crawl/
-  config.yaml
-  README.md
-  prepare_endnote_import.py
-  requirements.txt
+AI_literature_management/
+  config.example.yaml
+  init_project.py
   run_weekly.py
-  scheduler.ps1
+  run_summary.py
+  prepare_endnote_import.py
+  scheduler_crawl_endnote.ps1
+  scheduler_summary.ps1
   src/
-    archive_manager.py
-    article_fetcher.py
-    config.py
-    llm.py
-    models.py
-    pdf_utils.py
-    source_discovery.py
-    state_manager.py
-    utils.py
+  skills/
+    literature-ingest/
+    literature-locator/
+    zotero-link-import/
+    zotero-docx-paper-writing/
+  tests/
 ```
 
 ## Setup
 
 ```powershell
-git clone https://github.com/yctrrr/AI_literature_crawl.git
-cd AI_literature_crawl
+git clone https://github.com/yctrrr/AI_literature_management.git
+cd AI_literature_management
 pip install -r requirements.txt
 playwright install chromium
-$env:DEEPSEEK_API_KEY = "..."
+python .\init_project.py
 ```
 
-For persistent scheduled runs:
+The initializer asks for:
+
+- Main literature-library root.
+- Existing category-source directory.
+- Automated archive directory.
+- Optional persistent browser profile.
+- LLM provider, model, base URL, and API-key environment-variable name.
+- Optional Zotero linked-file root.
+
+It creates a local `config.yaml`. The file is ignored by Git. API keys and Zotero tokens are never written into the public template.
+
+Set the environment variable selected during initialization before summary runs:
 
 ```powershell
-setx DEEPSEEK_API_KEY "your_key_here"
+$env:LLM_API_KEY = "..."
 ```
-
-Restart PowerShell after using `setx`.
-
-For institutional access, run once with a visible browser and complete login if needed:
-
-```powershell
-python .\run_weekly.py --config .\config.yaml --limit 1 --headless false
-```
-
-`--limit 1` is only for testing. Formal runs use `download.max_articles_per_run` from `config.yaml`; the current default is `20`.
 
 ## Configuration
 
-Key settings live in `config.yaml`:
+`config.example.yaml` documents every setting. Explicit environment overrides are available:
 
-```yaml
-keywords:
-  - air pollution
-  - climate change
-  - energy transition
+- `AI_LITERATURE_CONFIG`
+- `AI_LITERATURE_LIBRARY_ROOT`
+- `AI_LITERATURE_CATEGORY_SOURCE`
+- `AI_LITERATURE_ARCHIVE_ROOT`
+- `AI_LITERATURE_BROWSER_PROFILE`
+- `ZOTERO_LINK_ALLOWED_ROOT`
 
-nature:
-  journal_name_required_term: Nature
-
-download:
-  max_articles_per_run: 20
-
-llm:
-  provider: deepseek
-  model: deepseek-v4-pro
-  api_key_env: DEEPSEEK_API_KEY
-  base_url: https://api.deepseek.com
-```
-
-Do not put API keys directly in `config.yaml`; use environment variables.
+Command-line path arguments take precedence over environment and project configuration.
 
 ## Commands
 
-Discovery only:
+Discover candidates without downloading:
 
 ```powershell
 python .\run_weekly.py --config .\config.yaml --dry-run
 ```
 
-Download and summarize one paper:
-
-```powershell
-python .\run_weekly.py --config .\config.yaml --limit 1 --headless false
-```
-
-Download and summarize the top 10 journal-matched candidates:
-
-```powershell
-python .\run_weekly.py --config .\config.yaml --limit 10 --headless false
-```
-
-Formal run using `download.max_articles_per_run`:
+Download new papers, leave them pending, and refresh the recent EndNote package:
 
 ```powershell
 python .\run_weekly.py --config .\config.yaml --headless false
 ```
 
-Download/classify without summary:
+Classify and summarize pending papers:
 
 ```powershell
-python .\run_weekly.py --config .\config.yaml --limit 1 --headless false --no-summarize
+python .\run_summary.py --config .\config.yaml
 ```
 
-Prepare an EndNote import package from downloaded papers:
+Run crawl, classification, and summary together for debugging:
 
 ```powershell
-python .\prepare_endnote_import.py
+python .\run_weekly.py --config .\config.yaml --headless false --summarize
 ```
 
-The generated `.enw` file stores the main PDF and any matching `Supp-*` file on the same EndNote record, and adds the `AI_crawl` keyword for grouping.
-
-## Weekly Scheduler
-
-Register the default Monday 09:00 task:
+Rebuild the summary index without crawling or calling an LLM:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scheduler.ps1
+python .\run_weekly.py --config .\config.yaml --rebuild-summary
 ```
 
-The task runs:
+Export recent EndNote records:
 
 ```powershell
-python <repo>\run_weekly.py --config <repo>\config.yaml
+python .\prepare_endnote_import.py --config .\config.yaml --since-days 7
 ```
+
+Export the full archive:
+
+```powershell
+python .\prepare_endnote_import.py --config .\config.yaml --all
+```
+
+## Agent Skills
+
+The repository includes:
+
+- `literature-ingest`: resolve, duplicate-check, classify, and download literature after confirmation.
+- `literature-locator`: find local papers and likely supplements without modifying files.
+- `zotero-link-import`: link an existing PDF into an exact Zotero collection after confirmation.
+- `zotero-docx-paper-writing`: coordinate scoped Word manuscript edits with backups, Zotero safety, and package audits.
+
+Install the repository skills after the GitHub repository is renamed:
+
+```powershell
+npx skills add yctrrr/AI_literature_management -g -y
+```
+
+Zotero integration is opt-in. Read `skills/zotero-link-import/SKILL.md` and authorize installation before running its installer. Local endpoint tokens and generated XPI files remain outside Git.
+
+## Scheduler
+
+Register the Monday 09:00 crawl and EndNote task:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scheduler_crawl_endnote.ps1
+```
+
+Register the Monday 11:00 summary task:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scheduler_summary.ps1
+```
+
+Both scripts derive the project root from their own location. Override `-ProjectRoot`, `-PythonExe`, `-WeeklyDay`, or `-At` when needed.
 
 ## Outputs
 
-- `_download\Journal-FirstAuthor-Year-Title.pdf`
-- `_download\Supp-Journal-FirstAuthor-Year-Title.<ext>` before classification/move
-- `<Category>\Journal-FirstAuthor-Year-Title.pdf`
-- `<Category>\Supp-Journal-FirstAuthor-Year-Title.<ext>`
-- `<Category>\Journal-FirstAuthor-Year-Title.metadata.json`
-- `_state\processed_articles.jsonl`
-- `_state\pending_no_pdf.jsonl`
-- `_state\filtered_articles.jsonl`
-- `_state\failed_downloads.jsonl`
-- `_state\run_log.jsonl`
+- `_pending_summary\*.pdf` and `*.metadata.json`
+- `<Category>\*.pdf` and matching supplements
+- `_state\*.jsonl`
+- `_summaries\summary_index.json`
 - `_summaries\summary.md`
-- `_endnote_import\AI_crawl_latest.enw`
+- `_summaries\summary.backup.md`
+- `_endnote_import\AI_literature_management_latest.ris`
+- `_endnote_import\AI_literature_management_latest.enw`
+- Timestamped manifests and attachment reports
 
-Each paper entry in `summary.md` uses the final PDF filename without `.pdf` as its Markdown title, so it can be matched directly to the downloaded file.
+## Boundaries
 
-## Duplicate Handling
+- Do not put API keys in YAML.
+- Keep browser profiles, downloaded literature, generated summaries, runtime state, Zotero client configuration, and generated XPI files local.
+- The crawler downloads only public or user-authorized files and does not bypass access controls.
+- Zotero changes always require explicit confirmation.
+- DOCX changes follow an explicit edit-scope allowlist and verified backup workflow.
 
-The crawler avoids repeat downloads using:
+## Tests
 
-- `_state\processed_articles.jsonl`
-- `_state\filtered_articles.jsonl`
-- existing `<Category>\*.metadata.json`
-- DOI first, source URL second
+```powershell
+python -m pytest -q
+```
 
-If a previous run downloaded or filtered a paper, later formal runs skip it. Missing summaries can be filled later with a separate repair workflow if needed.
-
-## Notes
-
-- Nature page structure can change, so selectors may need maintenance.
-- `nature.journal_name_required_term` filters out articles whose journal title does not contain the configured text before the run applies `--limit` / `download.max_articles_per_run`.
-- PDF text extraction skips unreadable pages and records extraction failures without stopping the whole run.
-- Institution-protected PDFs may require a logged-in Chrome profile.
-- Search fallback is intentionally rate-limited by `delay_seconds`.
+The test suite is network-free and does not start Zotero, Word, a browser, or an LLM.

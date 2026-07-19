@@ -192,15 +192,29 @@ class ArticleFetcher:
     def _find_attachment_url(html: str, page_url: str) -> str:
         soup = BeautifulSoup(html, "html.parser")
         patterns = ("supplementary", "additional", "source data", "extended data")
+        candidates: list[str] = []
+
+        def is_download_like(url: str) -> bool:
+            parsed = urlparse(url)
+            path = parsed.path.lower()
+            if normalize_url(url, page_url).rstrip("/") == normalize_url(page_url).rstrip("/"):
+                return False
+            if "/figures/" in path or "/tables/" in path:
+                return False
+            if re.search(r"\.(pdf|zip|xlsx?|docx?|csv|txt|tar|gz|7z)(?:$|[?#])", path):
+                return True
+            return "static-content.springer.com" in parsed.netloc.lower() or "mediaobjects" in path or "/esm/" in path
+
         for anchor in soup.find_all("a", href=True):
             href = anchor.get("href", "")
             text = anchor.get_text(" ", strip=True).lower()
             joined = f"{href} {text}".lower()
             if any(pattern in joined for pattern in patterns):
-                return normalize_url(href, page_url)
-        return ""
+                url = normalize_url(href, page_url)
+                if is_download_like(url):
+                    candidates.append(url)
+        return candidates[0] if candidates else ""
 
-    @staticmethod
     @staticmethod
     def _article_file_stem(metadata: dict, candidate: Candidate) -> str:
         journal = metadata.get("journal") or "Nature"

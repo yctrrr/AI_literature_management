@@ -1,0 +1,4 @@
+interface:
+  display_name: "Zotero DOCX Paper Writing"
+  short_description: "Write and revise DOCX papers with Zotero safely"
+  default_prompt: "Use $zotero-docx-paper-writing to draft or revise a Word manuscript while preserving Zotero citations and limiting changes to the requested scope."

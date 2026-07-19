@@ -1,4 +1,4 @@
-# AI Literature Crawl
+# AI Literature Management
 
 <!-- README-I18N:START -->
 
@@ -6,196 +6,182 @@
 
 <!-- README-I18N:END -->
 
-## 概览
-
-AI Literature Crawl 是一个面向 Nature 平台文献的自动化工作流。它会从可配置的 feed 和搜索结果中发现候选文章，按期刊名称进行过滤，下载正文 PDF 和第一个可用补充文件，使用 DeepSeek 将论文归类到本地主题目录，并把总结追加到累计 Markdown 文件中。
-
-默认配置面向空气质量、气候变化和能源转型相关文献。
+AI Literature Management 是一个本地优先的学术文献发现、下载、整理、定位、总结和引用工作流。当前自动抓取器面向 Nature 平台文章；仓库内置的 Agent Skills 还支持 DOI、arXiv、出版社页面、本地文献库、Zotero 和 DOCX 工作流。
 
 ## 功能
 
-- 优先从 Nature feed / 文章列表发现候选文章。
-- 当 feed 结果不足时，使用 Nature 搜索作为受控补充来源。
-- 在应用 `--limit` 或 `download.max_articles_per_run` 之前，先按 `nature.journal_name_required_term` 过滤期刊名称。
-- 只下载可访问 PDF 的文章。
-- 优先使用 Nature 页面上的真实下载按钮，而不是只依赖 PDF metadata 链接。
-- 当补充材料是真实可下载文件时，下载第一个 supplementary / additional 文件。
-- 正文 PDF 命名为 `Journal-FirstAuthor-Year-Title.pdf`。
-- 补充材料命名为 `Supp-Journal-FirstAuthor-Year-Title.<ext>`。
-- 通过 OpenAI-compatible API 调用 DeepSeek V4 Pro。
-- 将每篇文章归类到本地主题文件夹。
-- 通过 DOI / URL 元数据避免重复下载。
-- PDF 文本抽取遇到不可读页面时会跳过该页，不会中断整次运行。
-- 生成 EndNote 导入文件，并把正文 PDF 与匹配的 `Supp-*` 文件挂到同一条记录下。
-- 支持 Windows Task Scheduler 每周自动运行。
+- 从可配置 feed 发现 Nature 文章，并使用受控搜索作为补充。
+- 在应用每次运行的文章数量限制前先过滤期刊名称。
+- 下载可访问的 PDF 和第一个真实补充附件。
+- 将抓取与 EndNote 导出和 LLM 分类总结分开运行。
+- 新文章先进入 `_pending_summary`，等待总结任务处理。
+- 维护结构化 `summary_index.json` 和按分类组织的 Markdown 总结。
+- 生成最近或全量 RIS/ENW 导入包及附件报告。
+- 通过 DOI、来源 URL、元数据和文件名避免重复下载。
+- 内置四个可复用 Agent Skills，覆盖文献获取、本地检索、Zotero 链接导入和引用安全的 DOCX 写作。
+- 使用初始化生成的本地配置，不内置任何机器特定路径。
 
-## 路径
-
-- 项目目录：当前仓库根目录
-- 分类目录来源：默认 `./example_taxonomy`
-- 文献归档目录：默认 `./data/archive`
-
-这些路径都可以在 `config.yaml` 中修改。
-
-## 项目结构
+## 架构
 
 ```text
-literature_crawl/
-  config.yaml
-  README.md
-  prepare_endnote_import.py
-  requirements.txt
+AI_literature_management/
+  config.example.yaml
+  init_project.py
   run_weekly.py
-  scheduler.ps1
+  run_summary.py
+  prepare_endnote_import.py
+  scheduler_crawl_endnote.ps1
+  scheduler_summary.ps1
   src/
-    archive_manager.py
-    article_fetcher.py
-    config.py
-    llm.py
-    models.py
-    pdf_utils.py
-    source_discovery.py
-    state_manager.py
-    utils.py
+  skills/
+    literature-ingest/
+    literature-locator/
+    zotero-link-import/
+    zotero-docx-paper-writing/
+  tests/
 ```
 
 ## 安装
 
 ```powershell
-git clone https://github.com/yctrrr/AI_literature_crawl.git
-cd AI_literature_crawl
+git clone https://github.com/yctrrr/AI_literature_management.git
+cd AI_literature_management
 pip install -r requirements.txt
 playwright install chromium
-$env:DEEPSEEK_API_KEY = "..."
+python .\init_project.py
 ```
 
-如果需要让定时任务长期运行，建议设置持久环境变量：
+初始化器会询问：
+
+- 主文献库根目录。
+- 已存在的分类来源目录。
+- 自动抓取归档目录。
+- 可选的持久浏览器 profile。
+- LLM provider、model、base URL 和 API Key 环境变量名称。
+- 可选的 Zotero 链接文件允许根目录。
+
+初始化器生成本地 `config.yaml`，该文件已被 Git 忽略。API Key 和 Zotero token 不会写入公共模板。
+
+在运行总结任务前，设置初始化时选择的环境变量：
 
 ```powershell
-setx DEEPSEEK_API_KEY "your_key_here"
+$env:LLM_API_KEY = "..."
 ```
-
-执行 `setx` 后需要重新打开 PowerShell。
-
-如果需要机构登录权限，先用可见浏览器运行一次，并在弹出的 Chrome 中完成登录：
-
-```powershell
-python .\run_weekly.py --config .\config.yaml --limit 1 --headless false
-```
-
-`--limit 1` 只用于测试。正式运行默认使用 `config.yaml` 中的 `download.max_articles_per_run`，当前默认值是 `20`。
 
 ## 配置
 
-主要配置在 `config.yaml` 中：
+`config.example.yaml` 记录了全部配置项。以下环境变量可显式覆盖配置：
 
-```yaml
-keywords:
-  - air pollution
-  - climate change
-  - energy transition
+- `AI_LITERATURE_CONFIG`
+- `AI_LITERATURE_LIBRARY_ROOT`
+- `AI_LITERATURE_CATEGORY_SOURCE`
+- `AI_LITERATURE_ARCHIVE_ROOT`
+- `AI_LITERATURE_BROWSER_PROFILE`
+- `ZOTERO_LINK_ALLOWED_ROOT`
 
-nature:
-  journal_name_required_term: Nature
+命令行路径参数优先于环境变量和项目配置。
 
-download:
-  max_articles_per_run: 20
+## 命令
 
-llm:
-  provider: deepseek
-  model: deepseek-v4-pro
-  api_key_env: DEEPSEEK_API_KEY
-  base_url: https://api.deepseek.com
-```
-
-不要把 API key 直接写入 `config.yaml`，应使用环境变量。
-
-## 常用命令
-
-只发现候选文章，不下载、不调用模型：
+只发现候选文章，不下载：
 
 ```powershell
 python .\run_weekly.py --config .\config.yaml --dry-run
 ```
 
-下载并总结 1 篇文章：
-
-```powershell
-python .\run_weekly.py --config .\config.yaml --limit 1 --headless false
-```
-
-下载并总结前 10 篇符合期刊过滤条件的候选文章：
-
-```powershell
-python .\run_weekly.py --config .\config.yaml --limit 10 --headless false
-```
-
-按 `download.max_articles_per_run` 正式运行：
+下载新文章、保留在待总结队列并刷新最近 EndNote 包：
 
 ```powershell
 python .\run_weekly.py --config .\config.yaml --headless false
 ```
 
-只下载和分类，不生成总结：
+分类并总结待处理文章：
 
 ```powershell
-python .\run_weekly.py --config .\config.yaml --limit 1 --headless false --no-summarize
+python .\run_summary.py --config .\config.yaml
 ```
 
-从已下载文献生成 EndNote 导入文件：
+调试时合并运行抓取、分类和总结：
 
 ```powershell
-python .\prepare_endnote_import.py
+python .\run_weekly.py --config .\config.yaml --headless false --summarize
 ```
 
-生成的 `.enw` 文件会把正文 PDF 和匹配的 `Supp-*` 文件放在同一条 EndNote 记录下，并添加 `AI_crawl` 关键词，便于分组。
-
-## 每周定时任务
-
-注册默认每周一 09:00 运行的 Windows 定时任务：
+不抓取、不调用 LLM，只重建总结索引：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scheduler.ps1
+python .\run_weekly.py --config .\config.yaml --rebuild-summary
 ```
 
-定时任务执行的命令是：
+导出最近 EndNote 记录：
 
 ```powershell
-python <repo>\run_weekly.py --config <repo>\config.yaml
+python .\prepare_endnote_import.py --config .\config.yaml --since-days 7
 ```
 
-## 输出文件
+导出完整归档：
 
-- `_download\Journal-FirstAuthor-Year-Title.pdf`
-- `_download\Supp-Journal-FirstAuthor-Year-Title.<ext>`，分类移动前的临时位置
-- `<Category>\Journal-FirstAuthor-Year-Title.pdf`
-- `<Category>\Supp-Journal-FirstAuthor-Year-Title.<ext>`
-- `<Category>\Journal-FirstAuthor-Year-Title.metadata.json`
-- `_state\processed_articles.jsonl`
-- `_state\pending_no_pdf.jsonl`
-- `_state\filtered_articles.jsonl`
-- `_state\failed_downloads.jsonl`
-- `_state\run_log.jsonl`
+```powershell
+python .\prepare_endnote_import.py --config .\config.yaml --all
+```
+
+## Agent Skills
+
+仓库包含：
+
+- `literature-ingest`：解析、查重、分类并在确认后下载文献。
+- `literature-locator`：查找本地论文及可能的附件，不修改文件。
+- `zotero-link-import`：在确认后将现有 PDF 链接到准确的 Zotero collection。
+- `zotero-docx-paper-writing`：通过备份、Zotero 安全约束和文档包审计协调限定范围的 Word 修改。
+
+GitHub 仓库完成重命名后，可安装全部 Skills：
+
+```powershell
+npx skills add yctrrr/AI_literature_management -g -y
+```
+
+Zotero 集成为可选功能。运行安装器前先阅读 `skills/zotero-link-import/SKILL.md` 并取得安装授权。本地 endpoint token 和生成的 XPI 不进入 Git。
+
+## 定时任务
+
+注册每周一 09:00 的抓取和 EndNote 任务：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scheduler_crawl_endnote.ps1
+```
+
+注册每周一 11:00 的总结任务：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scheduler_summary.ps1
+```
+
+两个脚本都从自身位置推导项目根目录。需要时可覆盖 `-ProjectRoot`、`-PythonExe`、`-WeeklyDay` 或 `-At`。
+
+## 输出
+
+- `_pending_summary\*.pdf` 和 `*.metadata.json`
+- `<分类>\*.pdf` 及匹配附件
+- `_state\*.jsonl`
+- `_summaries\summary_index.json`
 - `_summaries\summary.md`
-- `_endnote_import\AI_crawl_latest.enw`
+- `_summaries\summary.backup.md`
+- `_endnote_import\AI_literature_management_latest.ris`
+- `_endnote_import\AI_literature_management_latest.enw`
+- 带时间戳的清单和附件报告
 
-`summary.md` 中每篇文章的 Markdown 主标题使用最终 PDF 文件名去掉 `.pdf` 后的形式，方便直接定位到下载文件。
+## 边界
 
-## 避免重复下载
+- 不要把 API Key 写入 YAML。
+- 浏览器 profile、下载文献、生成总结、运行状态、Zotero 客户端配置和生成的 XPI 均只保存在本地。
+- 抓取器只下载公开或用户有权访问的文件，不绕过访问控制。
+- Zotero 修改始终需要明确确认。
+- DOCX 修改必须遵守明确的编辑范围和已验证备份流程。
 
-程序通过以下信息避免重复下载：
+## 测试
 
-- `_state\processed_articles.jsonl`
-- `_state\filtered_articles.jsonl`
-- 已存在的 `<Category>\*.metadata.json`
-- 优先使用 DOI，其次使用来源 URL
+```powershell
+python -m pytest -q
+```
 
-只要某篇文章已经下载或被过滤过，后续正式运行就会跳过。缺失的总结可以通过后续修复流程单独补齐。
-
-## 注意事项
-
-- Nature 页面结构可能变化，选择器后续可能需要维护。
-- `nature.journal_name_required_term` 会在应用 `--limit` / `download.max_articles_per_run` 之前过滤掉期刊名称不包含指定文本的文章。
-- PDF 文本抽取会跳过不可读页面，并记录抽取失败，不会中断整次运行。
-- 需要机构权限的 PDF 可能依赖已登录的 Chrome profile。
-- 搜索 fallback 会受到 `delay_seconds` 限速控制。
+测试套件不访问网络，也不会启动 Zotero、Word、浏览器或 LLM。

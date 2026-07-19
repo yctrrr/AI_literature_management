@@ -8,6 +8,9 @@ from src.models import Candidate, Classification, FetchResult
 from src.utils import now_iso, unique_path
 
 
+PENDING_SUMMARY_DIR = "_pending_summary"
+
+
 class ArchiveManager:
     def __init__(self, category_source: Path, archive_root: Path):
         self.category_source = category_source
@@ -15,12 +18,14 @@ class ArchiveManager:
         self.state_dir = archive_root / "_state"
         self.summary_dir = archive_root / "_summaries"
         self.download_dir = archive_root / "_download"
+        self.pending_summary_dir = archive_root / PENDING_SUMMARY_DIR
 
     def ensure_layout(self) -> None:
         self.archive_root.mkdir(parents=True, exist_ok=True)
         self.state_dir.mkdir(parents=True, exist_ok=True)
         self.summary_dir.mkdir(parents=True, exist_ok=True)
         self.download_dir.mkdir(parents=True, exist_ok=True)
+        self.pending_summary_dir.mkdir(parents=True, exist_ok=True)
         for category in self.categories():
             (self.archive_root / category).mkdir(parents=True, exist_ok=True)
 
@@ -33,7 +38,10 @@ class ArchiveManager:
         return self.download_dir
 
     def finalize_article(self, candidate: Candidate, fetched: FetchResult, classification: Classification) -> Path:
-        category = classification.category if classification.category in self.categories() else "others"
+        if classification.category == PENDING_SUMMARY_DIR:
+            category = PENDING_SUMMARY_DIR
+        else:
+            category = classification.category if classification.category in self.categories() else "others"
         category_dir = self.archive_root / category
         category_dir.mkdir(parents=True, exist_ok=True)
 
@@ -68,9 +76,3 @@ class ArchiveManager:
             json.dump(metadata, handle, ensure_ascii=False, indent=2)
 
         return category_dir
-
-    def write_summary(self, fetched: FetchResult, summary_text: str) -> None:
-        summary_path = self.summary_dir / "summary.md"
-        title = fetched.pdf_path.stem if fetched.pdf_path else "Untitled"
-        with summary_path.open("a", encoding="utf-8") as handle:
-            handle.write(f"## {title}\n\n{summary_text.strip()}\n\n")

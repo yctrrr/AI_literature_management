@@ -1,0 +1,4 @@
+interface:
+  display_name: "Literature Ingest"
+  short_description: "Sort and download papers into topic folders."
+  default_prompt: "Use $literature-ingest to download this paper and place it in the right local literature folder."

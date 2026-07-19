@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 from src.models import Candidate, Classification, FetchResult
+from src.archive_manager import PENDING_SUMMARY_DIR
 from src.utils import JsonlLogger, read_jsonl
 
 
@@ -109,7 +110,7 @@ class StateManager:
         if not self.archive_root.exists():
             return rows
         for metadata_path in self.archive_root.glob("*/*.metadata.json"):
-            if metadata_path.parent.name.startswith("_"):
+            if metadata_path.parent.name.startswith("_") and metadata_path.parent.name != PENDING_SUMMARY_DIR:
                 continue
             try:
                 metadata = json.loads(metadata_path.read_text(encoding="utf-8"))

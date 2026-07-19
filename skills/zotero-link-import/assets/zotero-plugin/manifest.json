@@ -1,0 +1,15 @@
+{
+  "manifest_version": 2,
+  "name": "AI Literature Management Linked PDF Import",
+  "version": "1.1.0",
+  "description": "Links existing PDF files into named Zotero collections through a local authenticated endpoint.",
+  "homepage_url": "https://www.zotero.org/support/dev/zotero_7_for_developers",
+  "author": "AI Literature Management Contributors",
+  "applications": {
+    "zotero": {
+      "id": "{7f9c5a2e-1d4b-4a8f-9c6e-2b3d5f7a9c10}",
+      "strict_min_version": "6.999",
+      "strict_max_version": "10.*"
+    }
+  }
+}

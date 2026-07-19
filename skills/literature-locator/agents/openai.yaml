@@ -1,0 +1,4 @@
+interface:
+  display_name: "Literature Locator"
+  short_description: "Find local papers by title."
+  default_prompt: "Use $literature-locator to find this paper and its likely attachments in my configured local library."

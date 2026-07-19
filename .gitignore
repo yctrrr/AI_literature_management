@@ -4,5 +4,9 @@ __pycache__/
 .browser_test*/
 .env
 .venv/
+.pytest_cache/
 *.log
 data/
+config.yaml
+skills/**/config.json
+skills/**/*.xpi

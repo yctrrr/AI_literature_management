@@ -5,31 +5,37 @@ import os
 import sys
 from pathlib import Path
 
-from src.archive_manager import ArchiveManager
+from prepare_endnote_import import DEFAULT_GROUP, export_endnote_import
+from src.archive_manager import PENDING_SUMMARY_DIR, ArchiveManager
 from src.article_fetcher import ArticleFetcher
-from src.config import load_config
+from src.config import default_config_path, load_config
 from src.llm import LLMClient
+from src.models import Classification
 from src.pdf_utils import extract_pdf_text
 from src.source_discovery import SourceDiscovery
 from src.state_manager import StateManager
+from src.summary_manager import SummaryManager
 from src.utils import JsonlLogger, now_iso
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Weekly Nature literature crawler")
-    parser.add_argument("--config", default="config.yaml", help="Path to config.yaml")
+    parser.add_argument("--config", type=Path, default=None, help="Initialized project configuration")
     parser.add_argument("--dry-run", action="store_true", help="Discover only; do not download or call OpenAI")
     parser.add_argument("--limit", type=int, default=None, help="Maximum new candidate articles to process")
     parser.add_argument("--headless", choices=["true", "false"], default=None, help="Override browser headless mode")
     parser.add_argument("--delay-seconds", type=int, default=None, help="Override request delay for this run")
-    parser.add_argument("--no-summarize", action="store_true", help="Download/classify only; skip summaries")
+    parser.add_argument("--summarize", action="store_true", help="Classify and summarize during crawl. Requires LLM API key.")
+    parser.add_argument("--no-summarize", action="store_true", help="Deprecated; crawl only and leave new PDFs pending summary")
+    parser.add_argument("--rebuild-summary", action="store_true", help="Rebuild categorized summary without crawling")
     parser.add_argument("--skip-search-fallback", action="store_true", help="Disable /search fallback for this run")
+    parser.add_argument("--skip-endnote-export", action="store_true", help="Do not refresh EndNote RIS/ENW import files")
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
-    config = load_config(Path(args.config))
+    config = load_config(args.config or default_config_path())
     if args.headless is not None:
         config.browser.headless = args.headless == "true"
     if args.skip_search_fallback:
@@ -39,6 +45,12 @@ def main() -> int:
 
     archive = ArchiveManager(config.paths.category_source, config.paths.archive_root)
     archive.ensure_layout()
+    summary_manager = SummaryManager(config.paths.archive_root, archive.categories())
+    if args.rebuild_summary:
+        summary_manager.rebuild_from_archive()
+        print(f"Rebuilt summary: {summary_manager.summary_path}")
+        return 0
+
     state = StateManager(config.paths.archive_root / "_state")
     run_logger = JsonlLogger(config.paths.archive_root / "_state" / "run_log.jsonl")
 
@@ -46,7 +58,7 @@ def main() -> int:
     run_logger.write({"event": "run_start", "run_id": run_id, "dry_run": args.dry_run})
 
     discovery = SourceDiscovery(config.nature)
-    summarize = config.llm.summarize_by_default and not args.no_summarize
+    summarize = (args.summarize or config.llm.summarize_by_default) and not args.no_summarize
     candidates = discovery.discover(config.keywords)
     unprocessed_candidates = [c for c in candidates if not state.is_processed(c.doi, c.url)]
     process_limit = args.limit or config.download.max_articles_per_run
@@ -58,7 +70,7 @@ def main() -> int:
 
     if not args.dry_run and summarize and not os.environ.get(config.llm.api_key_env):
         message = f"Missing {config.llm.api_key_env}; aborting before downloads because summarization is enabled."
-        run_logger.write({"event": "run_aborted", "run_id": run_id, "reason": "missing_openai_api_key"})
+        run_logger.write({"event": "run_aborted", "run_id": run_id, "reason": "missing_llm_api_key"})
         print(message, file=sys.stderr)
         return 2
 
@@ -82,10 +94,30 @@ def main() -> int:
                 )
                 return 0
             for candidate in new_candidates:
-                process_candidate(candidate, archive, state, fetcher, llm, summarize, run_id)
+                process_candidate(candidate, archive, state, fetcher, llm, summary_manager, summarize, run_id)
     finally:
         if run_mode != "dry_run":
             run_logger.write({"event": "run_complete", "run_id": run_id, "mode": run_mode})
+
+    if not args.skip_endnote_export:
+        try:
+            export_result = export_endnote_import(config.paths.archive_root, DEFAULT_GROUP, since_days=7)
+        except Exception as exc:
+            run_logger.write({"event": "endnote_export_failed", "run_id": run_id, "error": str(exc)})
+            print(f"ENDNOTE EXPORT FAILED: {exc}", file=sys.stderr)
+            return 3
+        run_logger.write(
+            {
+                "event": "endnote_export_complete",
+                "run_id": run_id,
+                "records": export_result["records"],
+                "since_days": export_result["since_days"],
+                "ris": str(export_result["ris"]),
+                "enw": str(export_result["enw"]),
+                "manifest": str(export_result["manifest"]),
+                "attachment_report": str(export_result["attachment_report"]),
+            }
+        )
 
     return 0
 
@@ -119,7 +151,7 @@ def select_journal_candidates(fetcher, state, candidates, limit: int) -> list:
     return selected
 
 
-def process_candidate(candidate, archive, state, fetcher, llm, summarize: bool, run_id: str) -> None:
+def process_candidate(candidate, archive, state, fetcher, llm, summary_manager, summarize: bool, run_id: str) -> None:
     staging_dir = archive.staging_dir(run_id, "")
     staging_dir.mkdir(parents=True, exist_ok=True)
     try:
@@ -151,7 +183,15 @@ def process_candidate(candidate, archive, state, fetcher, llm, summarize: bool, 
         state.write_failure(candidate, "pdf_text_error", str(exc))
         print(f"PDF TEXT FAILED: {candidate.url} ({exc})")
     categories = archive.categories()
-    classification = llm.classify(candidate, fetched.metadata, text_excerpt, categories)
+    if summarize:
+        classification = llm.classify(candidate, fetched.metadata, text_excerpt, categories)
+    else:
+        classification = Classification(
+            PENDING_SUMMARY_DIR,
+            0.0,
+            "Crawl-only run; pending standalone summary/classification.",
+            "pending_summary",
+        )
     article_dir = archive.finalize_article(candidate, fetched, classification)
 
     summary_text = ""
@@ -159,7 +199,7 @@ def process_candidate(candidate, archive, state, fetcher, llm, summarize: bool, 
     if summarize:
         try:
             summary_text = llm.summarize(candidate, fetched.metadata, text_excerpt, classification)
-            archive.write_summary(fetched, summary_text)
+            summary_manager.upsert_article(fetched, classification, summary_text)
             summary_status = "completed"
         except Exception as exc:
             summary_status = "failed"

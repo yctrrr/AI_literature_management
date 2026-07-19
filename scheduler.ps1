@@ -1,5 +1,5 @@
 param(
-    [string]$TaskName = "Nature Weekly Literature Crawler",
+    [string]$TaskName = "AI Literature Management - Crawl and EndNote",
     [string]$ProjectRoot = "",
     [string]$PythonExe = "python",
     [string]$WeeklyDay = "Monday",

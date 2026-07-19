@@ -1,0 +1,4 @@
+interface:
+  display_name: "Zotero Linked Import"
+  short_description: "Link local PDFs into Zotero collections"
+  default_prompt: "Use $zotero-link-import to link a local PDF into a Zotero collection without copying the file."

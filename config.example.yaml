@@ -21,9 +21,10 @@ nature:
   search_max_pages_per_keyword: 2
   delay_seconds: 8
   request_timeout_seconds: 30
-  user_agent: "LiteratureCrawler/0.1 (+local research workflow)"
+  user_agent: "AILiteratureManagement/1.0"
 
 paths:
+  library_root: "./data/library"
   category_source: "./example_taxonomy"
   archive_root: "./data/archive"
 
@@ -35,13 +36,17 @@ download:
 
 browser:
   headless: true
-  use_chrome_profile: true
+  use_chrome_profile: false
   user_data_dir: ""
 
 llm:
-  provider: deepseek
-  model: deepseek-v4-pro
-  api_key_env: DEEPSEEK_API_KEY
-  base_url: https://api.deepseek.com
-  summarize_by_default: true
+  provider: openai-compatible
+  model: your-model
+  api_key_env: LLM_API_KEY
+  base_url: ""
+  summarize_by_default: false
   max_pdf_chars: 60000
+
+zotero:
+  enabled: false
+  allowed_root: ""
