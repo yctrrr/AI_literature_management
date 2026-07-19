@@ -219,6 +219,24 @@ def validated_cleanup_metadata_path(metadata: dict, pending_path: Path) -> Path 
         or cleanup_path.parent.name.startswith("_")
     ):
         raise ValueError("Invalid pending metadata cleanup path")
+    if cleanup_path.is_file():
+        try:
+            cleanup_metadata = json.loads(cleanup_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as error:
+            raise ValueError("Pending metadata cleanup target is unreadable") from error
+        queue_id = str(metadata.get("queue_id") or "").strip()
+        target_queue_id = str(cleanup_metadata.get("queue_id") or "").strip()
+        doi = str(metadata.get("doi") or "").strip().lower()
+        target_doi = str(cleanup_metadata.get("doi") or "").strip().lower()
+        source_url = str(metadata.get("source_url") or "").strip()
+        target_source_url = str(cleanup_metadata.get("source_url") or "").strip()
+        same_queue = bool(queue_id and target_queue_id and queue_id == target_queue_id)
+        same_legacy_identity = bool(
+            not target_queue_id
+            and ((doi and doi == target_doi) or (source_url and source_url == target_source_url))
+        )
+        if not same_queue and not same_legacy_identity:
+            raise ValueError("Pending metadata cleanup target belongs to another article")
     return cleanup_path
 
 

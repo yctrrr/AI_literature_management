@@ -333,10 +333,28 @@ def test_pending_summary_recovers_when_queue_marker_update_fails(
         )
 
     queued = json.loads(pending_metadata.read_text(encoding="utf-8"))
-    assert Path(queued["cleanup_metadata_path"]).parent.name == "Energy"
+    cleanup_path = Path(queued["cleanup_metadata_path"])
+    assert cleanup_path.parent.name == "Energy"
     assert list((archive_root / "Energy").glob("*.metadata.json"))
 
     monkeypatch.setattr(manager, "upsert_article", original_upsert)
+    cleanup_metadata = json.loads(cleanup_path.read_text(encoding="utf-8"))
+    expected_queue_id = cleanup_metadata["queue_id"]
+    cleanup_metadata["queue_id"] = "another-article"
+    cleanup_path.write_text(json.dumps(cleanup_metadata), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="another article"):
+        run_summary.summarize_pending_article(
+            pending_metadata,
+            archive,
+            archive.categories(),
+            LLM(),
+            manager,
+        )
+
+    assert cleanup_path.exists()
+    cleanup_metadata["queue_id"] = expected_queue_id
+    cleanup_path.write_text(json.dumps(cleanup_metadata), encoding="utf-8")
     run_summary.summarize_pending_article(
         pending_metadata,
         archive,
