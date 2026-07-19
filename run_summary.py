@@ -96,6 +96,11 @@ def summarize_pending_article(
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
     pdf_path = resolve_pdf_path(metadata, metadata_path)
     if not pdf_path.is_file():
+        recovered = find_finalized_metadata(metadata, metadata_path)
+        if recovered:
+            metadata.update(recovered)
+            pdf_path = resolve_pdf_path(metadata, metadata_path)
+    if not pdf_path.is_file():
         raise FileNotFoundError(f"Missing PDF for metadata: {metadata_path}")
 
     candidate = Candidate(
@@ -136,6 +141,32 @@ def resolve_attachment_path(metadata: dict) -> Path | None:
     attachment_path = Path(metadata.get("attachment_path") or "")
     if attachment_path.is_file():
         return attachment_path
+    return None
+
+
+def find_finalized_metadata(metadata: dict, pending_path: Path) -> dict | None:
+    archive_root = pending_path.parent.parent
+    doi = str(metadata.get("doi") or "").strip().lower()
+    source_url = str(metadata.get("source_url") or "").strip()
+    title = str(metadata.get("title") or "").strip()
+    for candidate_path in sorted(archive_root.glob("*/*.metadata.json")):
+        if candidate_path.parent.name.startswith("_"):
+            continue
+        try:
+            candidate = json.loads(candidate_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        candidate_pdf = Path(candidate.get("pdf_path") or "")
+        if not candidate_pdf.is_file():
+            continue
+        same_name = candidate_path.name == pending_path.name
+        same_doi = bool(doi and str(candidate.get("doi") or "").strip().lower() == doi)
+        same_url = bool(
+            source_url and str(candidate.get("source_url") or "").strip() == source_url
+        )
+        same_title = bool(title and str(candidate.get("title") or "").strip() == title)
+        if same_name or same_doi or same_url or same_title:
+            return candidate
     return None
 
 

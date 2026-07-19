@@ -44,47 +44,72 @@ class ArchiveManager:
         category_dir = self.archive_root / category
         category_dir.mkdir(parents=True, exist_ok=True)
 
+        original_pdf = fetched.pdf_path
+        original_attachment = fetched.attachment_path
         source_pdf = None
-        if fetched.pdf_path:
-            source_pdf = fetched.pdf_path.resolve()
-            pdf_target = (
-                fetched.pdf_path
-                if source_pdf.parent == category_dir.resolve()
-                else unique_path(category_dir / fetched.pdf_path.name)
-            )
-            if fetched.pdf_path.resolve() != pdf_target.resolve():
-                shutil.move(str(fetched.pdf_path), str(pdf_target))
-            fetched.pdf_path = pdf_target
+        try:
+            if fetched.pdf_path:
+                source_pdf = fetched.pdf_path.resolve()
+                pdf_target = (
+                    fetched.pdf_path
+                    if source_pdf.parent == category_dir.resolve()
+                    else unique_path(category_dir / fetched.pdf_path.name)
+                )
+                if fetched.pdf_path.resolve() != pdf_target.resolve():
+                    shutil.move(str(fetched.pdf_path), str(pdf_target))
+                fetched.pdf_path = pdf_target
 
-        if fetched.attachment_path:
-            source_attachment = fetched.attachment_path.resolve()
-            attachment_target = (
-                fetched.attachment_path
-                if source_attachment.parent == category_dir.resolve()
-                else unique_path(category_dir / fetched.attachment_path.name)
-            )
-            if fetched.attachment_path.resolve() != attachment_target.resolve():
-                shutil.move(str(fetched.attachment_path), str(attachment_target))
-            fetched.attachment_path = attachment_target
+            if fetched.attachment_path:
+                source_attachment = fetched.attachment_path.resolve()
+                attachment_target = (
+                    fetched.attachment_path
+                    if source_attachment.parent == category_dir.resolve()
+                    else unique_path(category_dir / fetched.attachment_path.name)
+                )
+                if fetched.attachment_path.resolve() != attachment_target.resolve():
+                    shutil.move(str(fetched.attachment_path), str(attachment_target))
+                fetched.attachment_path = attachment_target
 
-        metadata = {
-            **fetched.metadata,
-            "source_url": candidate.url,
-            "keyword": candidate.keyword,
-            "category": category,
-            "classification": {
-                "confidence": classification.confidence,
-                "rationale": classification.rationale,
-                "status": classification.status,
-            },
-            "pdf_path": str(fetched.pdf_path) if fetched.pdf_path else "",
-            "attachment_path": str(fetched.attachment_path) if fetched.attachment_path else "",
-            "updated_at": now_iso(),
-        }
-        metadata_name = f"{Path(fetched.pdf_path).stem}.metadata.json" if fetched.pdf_path else "metadata.json"
-        metadata_path = category_dir / metadata_name
-        if not metadata_path.exists() or source_pdf is None or source_pdf.parent != category_dir.resolve():
-            metadata_path = unique_path(metadata_path)
-        atomic_write_json(metadata_path, metadata)
+            metadata = {
+                **fetched.metadata,
+                "source_url": candidate.url,
+                "keyword": candidate.keyword,
+                "category": category,
+                "classification": {
+                    "confidence": classification.confidence,
+                    "rationale": classification.rationale,
+                    "status": classification.status,
+                },
+                "pdf_path": str(fetched.pdf_path) if fetched.pdf_path else "",
+                "attachment_path": str(fetched.attachment_path) if fetched.attachment_path else "",
+                "updated_at": now_iso(),
+            }
+            metadata_name = (
+                f"{Path(fetched.pdf_path).stem}.metadata.json"
+                if fetched.pdf_path
+                else "metadata.json"
+            )
+            metadata_path = category_dir / metadata_name
+            if (
+                not metadata_path.exists()
+                or source_pdf is None
+                or source_pdf.parent != category_dir.resolve()
+            ):
+                metadata_path = unique_path(metadata_path)
+            atomic_write_json(metadata_path, metadata)
+        except Exception:
+            self._restore_moved_file(fetched.attachment_path, original_attachment)
+            self._restore_moved_file(fetched.pdf_path, original_pdf)
+            fetched.pdf_path = original_pdf
+            fetched.attachment_path = original_attachment
+            raise
 
         return category_dir
+
+    @staticmethod
+    def _restore_moved_file(current: Path | None, original: Path | None) -> None:
+        if not current or not original or current.resolve() == original.resolve():
+            return
+        if current.exists() and not original.exists():
+            original.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(current), str(original))

@@ -53,7 +53,7 @@ def atomic_private_write(path: Path, data: bytes) -> None:
         prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
     )
     try:
-        os.chmod(temp_name, PRIVATE_MODE)
+        make_private(Path(temp_name))
         with os.fdopen(descriptor, "wb") as handle:
             handle.write(data)
             handle.flush()
@@ -311,7 +311,6 @@ def install(args: argparse.Namespace) -> int:
     token = existing_token(config_path) or secrets.token_urlsafe(32)
     xpi_path = config_path.with_suffix(".xpi")
     xpi_snapshot = file_snapshot(xpi_path)
-    xpi = build_xpi(token, allowed_root, xpi_path)
     destination = profile / "extensions" / f"{PLUGIN_ID}.xpi"
     config_snapshot = file_snapshot(config_path)
     destination_snapshot = file_snapshot(destination)
@@ -328,6 +327,7 @@ def install(args: argparse.Namespace) -> int:
             policy_snapshots[policy_path] = file_snapshot(policy_path)
     policy_paths = []
     try:
+        xpi = build_xpi(token, allowed_root, xpi_path)
         write_config(config_path, token, profile, allowed_root, zotero_exe)
         atomic_private_write(destination, xpi.read_bytes())
         if args.install_policy:

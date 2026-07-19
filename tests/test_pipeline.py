@@ -198,3 +198,109 @@ def test_summary_batch_returns_failure_when_any_article_fails(
     monkeypatch.setattr(run_summary, "summarize_pending_article", summarize)
 
     assert run_summary.main() == 1
+
+
+def test_finalize_restores_moved_pdf_when_metadata_write_fails(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    categories = tmp_path / "categories"
+    archive_root = tmp_path / "archive"
+    (categories / "Energy").mkdir(parents=True)
+    (categories / "others").mkdir()
+    archive = ArchiveManager(categories, archive_root)
+    archive.ensure_layout()
+    original_pdf = tmp_path / "paper.pdf"
+    original_pdf.write_bytes(b"%PDF-test")
+    fetched = FetchResult(original_pdf, None, {"title": "Rollback Paper"})
+    candidate = Candidate(
+        url="https://example.test/rollback",
+        title="Rollback Paper",
+        keyword="energy",
+        source="test",
+    )
+    monkeypatch.setattr(
+        "src.archive_manager.atomic_write_json",
+        lambda *_args: (_ for _ in ()).throw(OSError("metadata write failed")),
+    )
+
+    with pytest.raises(OSError, match="metadata write failed"):
+        archive.finalize_article(
+            candidate,
+            fetched,
+            Classification("Energy", 1.0, "match", "classified"),
+        )
+
+    assert original_pdf.exists()
+    assert fetched.pdf_path == original_pdf
+    assert not list((archive_root / "Energy").glob("*.pdf"))
+
+
+def test_pending_summary_recovers_when_queue_marker_update_fails(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    categories = tmp_path / "categories"
+    archive_root = tmp_path / "archive"
+    (categories / "Energy").mkdir(parents=True)
+    (categories / "others").mkdir()
+    archive = ArchiveManager(categories, archive_root)
+    archive.ensure_layout()
+    pending_pdf = archive.pending_summary_dir / "paper.pdf"
+    pending_pdf.write_bytes(b"%PDF-test")
+    pending_metadata = archive.pending_summary_dir / "paper.metadata.json"
+    pending_metadata.write_text(
+        json.dumps(
+            {
+                "title": "Marker Retry Paper",
+                "source_url": "https://example.test/marker-retry",
+                "pdf_path": str(pending_pdf),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class LLM:
+        max_pdf_chars = 100
+
+        @staticmethod
+        def classify(*_args):
+            return Classification("Energy", 1.0, "match", "classified")
+
+        @staticmethod
+        def summarize(*_args):
+            return "Summary"
+
+    manager = SummaryManager(archive_root, archive.categories())
+    manager.ensure_index()
+    monkeypatch.setattr(run_summary, "extract_pdf_text", lambda *_args, **_kwargs: "text")
+    original_marker_write = run_summary.atomic_write_json
+    monkeypatch.setattr(
+        run_summary,
+        "atomic_write_json",
+        lambda *_args: (_ for _ in ()).throw(OSError("marker write failed")),
+    )
+
+    with pytest.raises(OSError, match="marker write failed"):
+        run_summary.summarize_pending_article(
+            pending_metadata,
+            archive,
+            archive.categories(),
+            LLM(),
+            manager,
+        )
+
+    assert pending_metadata.exists()
+    assert not pending_pdf.exists()
+    monkeypatch.setattr(run_summary, "atomic_write_json", original_marker_write)
+    run_summary.summarize_pending_article(
+        pending_metadata,
+        archive,
+        archive.categories(),
+        LLM(),
+        manager,
+    )
+
+    assert not pending_metadata.exists()
+    assert len(list((archive_root / "Energy").glob("*.pdf"))) == 1
+    assert len(list((archive_root / "Energy").glob("*.metadata.json"))) == 1
