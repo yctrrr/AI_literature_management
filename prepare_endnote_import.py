@@ -81,12 +81,21 @@ def export_endnote_import(
     }
 
 
-def load_records(archive_root: Path, since_days: int | None = None) -> list[dict]:
+def load_records(
+    archive_root: Path,
+    since_days: int | None = None,
+    *,
+    include_pending: bool = True,
+) -> list[dict]:
     records: list[dict] = []
     seen: dict[str, dict] = {}
     cutoff = recent_cutoff(since_days)
     for metadata_path in sorted(archive_root.rglob("*.metadata.json")):
-        if is_internal_metadata_excluded(metadata_path, archive_root):
+        if is_internal_metadata_excluded(
+            metadata_path,
+            archive_root,
+            included_internal_dirs=(ENDNOTE_INCLUDED_INTERNAL_DIRS if include_pending else set()),
+        ):
             continue
         metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
         source_timestamp = record_timestamp(metadata, metadata_path)
@@ -110,9 +119,19 @@ def load_records(archive_root: Path, since_days: int | None = None) -> list[dict
     return records
 
 
-def is_internal_metadata_excluded(metadata_path: Path, archive_root: Path) -> bool:
+def is_internal_metadata_excluded(
+    metadata_path: Path,
+    archive_root: Path,
+    *,
+    included_internal_dirs: set[str] | None = None,
+) -> bool:
+    included_internal_dirs = (
+        ENDNOTE_INCLUDED_INTERNAL_DIRS
+        if included_internal_dirs is None
+        else included_internal_dirs
+    )
     for part in metadata_path.relative_to(archive_root).parts:
-        if part.startswith("_") and part not in ENDNOTE_INCLUDED_INTERNAL_DIRS:
+        if part.startswith("_") and part not in included_internal_dirs:
             return True
     return False
 

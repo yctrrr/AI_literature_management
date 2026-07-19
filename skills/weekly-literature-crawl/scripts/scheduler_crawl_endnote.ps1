@@ -6,14 +6,30 @@ param(
     [string]$At = "09:00"
 )
 
+$ErrorActionPreference = "Stop"
+
 if ([string]::IsNullOrWhiteSpace($ProjectRoot)) {
-    $ProjectRoot = $PSScriptRoot
+    if (-not [string]::IsNullOrWhiteSpace($env:AI_LITERATURE_PROJECT_ROOT)) {
+        $ProjectRoot = $env:AI_LITERATURE_PROJECT_ROOT
+    }
+    else {
+        $skillRoot = Split-Path $PSScriptRoot -Parent
+        $skillsRoot = Split-Path $skillRoot -Parent
+        $ProjectRoot = Split-Path $skillsRoot -Parent
+    }
 }
 
+$ProjectRoot = (Resolve-Path -LiteralPath $ProjectRoot).Path
 $script = Join-Path $ProjectRoot "run_weekly.py"
 $config = Join-Path $ProjectRoot "config.yaml"
-$arguments = "`"$script`" --config `"$config`""
+if (-not (Test-Path -LiteralPath $script -PathType Leaf)) {
+    throw "Weekly crawler entry point not found: $script"
+}
+if (-not (Test-Path -LiteralPath $config -PathType Leaf)) {
+    throw "Initialized configuration not found: $config"
+}
 
+$arguments = "`"$script`" --config `"$config`" --no-summarize"
 $action = New-ScheduledTaskAction -Execute $PythonExe -Argument $arguments -WorkingDirectory $ProjectRoot
 $trigger = New-ScheduledTaskTrigger -Weekly -DaysOfWeek $WeeklyDay -At $At
 $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -MultipleInstances IgnoreNew

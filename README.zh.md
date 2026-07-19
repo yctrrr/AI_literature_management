@@ -42,6 +42,7 @@ AI_literature_management/
   run_weekly.py
   run_summary.py
   prepare_endnote_import.py
+  prepare_zotero_import.py
   scheduler_crawl_endnote.ps1
   scheduler_summary.ps1
   src/
@@ -138,6 +139,14 @@ python .\prepare_endnote_import.py --config .\config.yaml --since-days 7
 python .\prepare_endnote_import.py --config .\config.yaml --all
 ```
 
+生成完整的只读 Zotero 导入审核清单：
+
+```powershell
+python .\prepare_zotero_import.py --config .\config.yaml --all
+```
+
+该命令只生成 JSON/CSV 清单，不连接或修改 Zotero。实际链接文件导入仍需单独确认后交给 `zotero-link-import`。
+
 ## Agent Skills
 
 仓库包含：
@@ -186,7 +195,7 @@ python .\skills\weekly-literature-crawl\scripts\weekly_literature_crawl.py `
   --project-root . summary
 ```
 
-包装器还支持 `rebuild`、`endnote --since-days 7` 和 `endnote --all`。从仓库外调用已安装的 skill 时，可设置 `AI_LITERATURE_PROJECT_ROOT`。
+包装器还支持 `rebuild`、`endnote --since-days 7`、`endnote --all` 和 `zotero-plan --all`。从仓库外调用已安装的 skill 时，可设置 `AI_LITERATURE_PROJECT_ROOT`。
 
 ## 定时任务
 
@@ -206,6 +215,8 @@ powershell -ExecutionPolicy Bypass -File .\scheduler_summary.ps1
 
 两个脚本都从自身位置推导项目根目录。需要时可覆盖 `-ProjectRoot`、`-PythonExe`、`-WeeklyDay` 或 `-At`。
 
+根目录 scheduler 文件是兼容包装器，实际注册逻辑位于 `skills/weekly-literature-crawl/scripts/`。
+
 ## 输出
 
 - `_pending_summary\*.pdf` 和 `*.metadata.json`
@@ -216,6 +227,8 @@ powershell -ExecutionPolicy Bypass -File .\scheduler_summary.ps1
 - `_summaries\summary.backup.md`
 - `_endnote_import\AI_literature_management_latest.ris`
 - `_endnote_import\AI_literature_management_latest.enw`
+- `_zotero_import\AI_literature_management_zotero_latest.json`
+- `_zotero_import\AI_literature_management_zotero_latest.csv`
 - 带时间戳的清单和附件报告
 
 ## 边界

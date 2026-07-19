@@ -16,7 +16,12 @@ import yaml
 
 PROJECT_ENV = "AI_LITERATURE_PROJECT_ROOT"
 CONFIG_ENV = "AI_LITERATURE_CONFIG"
-ENTRY_POINTS = ("run_weekly.py", "run_summary.py", "prepare_endnote_import.py")
+ENTRY_POINTS = (
+    "run_weekly.py",
+    "run_summary.py",
+    "prepare_endnote_import.py",
+    "prepare_zotero_import.py",
+)
 PATH_ENVIRONMENTS = {
     "library_root": "AI_LITERATURE_LIBRARY_ROOT",
     "category_source": "AI_LITERATURE_CATEGORY_SOURCE",
@@ -114,6 +119,13 @@ def build_parser() -> argparse.ArgumentParser:
     endnote.add_argument("--since-days", type=int, default=7)
     endnote.add_argument("--group")
     endnote.add_argument("--output-dir", type=Path)
+    zotero_plan = subparsers.add_parser(
+        "zotero-plan",
+        help="generate a read-only Zotero import review manifest",
+    )
+    zotero_plan.add_argument("--all", dest="all_records", action="store_true")
+    zotero_plan.add_argument("--since-days", type=int, default=7)
+    zotero_plan.add_argument("--output-dir", type=Path)
     return parser
 
 
@@ -174,6 +186,20 @@ def build_command(
         else:
             append_option(command, "--since-days", args.since_days)
         append_option(command, "--group", args.group)
+        append_option(command, "--output-dir", args.output_dir)
+        return command
+
+    if args.operation == "zotero-plan":
+        command = [
+            python,
+            str(project_root / "prepare_zotero_import.py"),
+            "--config",
+            str(config_path),
+        ]
+        if args.all_records:
+            command.append("--all")
+        else:
+            append_option(command, "--since-days", args.since_days)
         append_option(command, "--output-dir", args.output_dir)
         return command
 

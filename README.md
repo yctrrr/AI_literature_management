@@ -42,6 +42,7 @@ AI_literature_management/
   run_weekly.py
   run_summary.py
   prepare_endnote_import.py
+  prepare_zotero_import.py
   scheduler_crawl_endnote.ps1
   scheduler_summary.ps1
   src/
@@ -138,6 +139,14 @@ Export the full archive:
 python .\prepare_endnote_import.py --config .\config.yaml --all
 ```
 
+Generate a full read-only Zotero import review plan:
+
+```powershell
+python .\prepare_zotero_import.py --config .\config.yaml --all
+```
+
+This produces JSON/CSV manifests and does not connect to or modify Zotero. Perform actual linked-file imports separately through `zotero-link-import` after confirmation.
+
 ## Agent Skills
 
 The repository includes:
@@ -186,7 +195,7 @@ python .\skills\weekly-literature-crawl\scripts\weekly_literature_crawl.py `
   --project-root . summary
 ```
 
-The wrapper also supports `rebuild`, `endnote --since-days 7`, and `endnote --all`. Set `AI_LITERATURE_PROJECT_ROOT` when invoking the installed skill outside the repository.
+The wrapper also supports `rebuild`, `endnote --since-days 7`, `endnote --all`, and `zotero-plan --all`. Set `AI_LITERATURE_PROJECT_ROOT` when invoking the installed skill outside the repository.
 
 ## Scheduler
 
@@ -206,6 +215,8 @@ powershell -ExecutionPolicy Bypass -File .\scheduler_summary.ps1
 
 Both scripts derive the project root from their own location. Override `-ProjectRoot`, `-PythonExe`, `-WeeklyDay`, or `-At` when needed.
 
+The root scheduler files are compatibility wrappers. Their registration implementations live under `skills/weekly-literature-crawl/scripts/`.
+
 ## Outputs
 
 - `_pending_summary\*.pdf` and `*.metadata.json`
@@ -216,6 +227,8 @@ Both scripts derive the project root from their own location. Override `-Project
 - `_summaries\summary.backup.md`
 - `_endnote_import\AI_literature_management_latest.ris`
 - `_endnote_import\AI_literature_management_latest.enw`
+- `_zotero_import\AI_literature_management_zotero_latest.json`
+- `_zotero_import\AI_literature_management_zotero_latest.csv`
 - Timestamped manifests and attachment reports
 
 ## Boundaries

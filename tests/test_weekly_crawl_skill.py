@@ -23,7 +23,12 @@ def load_wrapper():
 def make_project(tmp_path: Path) -> tuple[Path, Path]:
     project = tmp_path / "project"
     project.mkdir()
-    for name in ("run_weekly.py", "run_summary.py", "prepare_endnote_import.py"):
+    for name in (
+        "run_weekly.py",
+        "run_summary.py",
+        "prepare_endnote_import.py",
+        "prepare_zotero_import.py",
+    ):
         (project / name).write_text("", encoding="utf-8")
     source = project / "src"
     source.mkdir()
@@ -176,6 +181,27 @@ def test_crawl_disables_default_summary_unless_explicit(tmp_path: Path) -> None:
     assert "--summarize" not in normal_command
     assert "--summarize" in summarized_command
     assert "--no-summarize" not in summarized_command
+
+
+def test_zotero_plan_forwards_read_only_export(tmp_path: Path) -> None:
+    wrapper = load_wrapper()
+    project, config = make_project(tmp_path)
+    output = tmp_path / "zotero plans"
+    args = wrapper.build_parser().parse_args(
+        ["zotero-plan", "--all", "--output-dir", str(output)]
+    )
+
+    command = wrapper.build_command(args, project, config)
+
+    assert command == [
+        str(args.python),
+        str(project / "prepare_zotero_import.py"),
+        "--config",
+        str(config),
+        "--all",
+        "--output-dir",
+        str(output),
+    ]
 
 
 def test_config_validation_rejects_missing_paths(tmp_path: Path) -> None:

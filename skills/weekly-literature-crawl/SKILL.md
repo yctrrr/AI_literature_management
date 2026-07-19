@@ -1,6 +1,6 @@
 ---
 name: weekly-literature-crawl
-description: Orchestrate a configured AI Literature Management project for weekly Nature-platform discovery, controlled PDF and supplement downloads, pending-summary processing, summary-index rebuilding, and recent or full EndNote export. Use when a user asks to check, run, troubleshoot, or schedule the weekly literature crawl; refresh a literature archive; process the pending-summary queue; or regenerate weekly EndNote packages.
+description: Orchestrate a configured AI Literature Management project for weekly Nature-platform discovery, controlled PDF and supplement downloads, pending-summary processing, summary-index rebuilding, EndNote export, and read-only Zotero import planning. Use when a user asks to check, run, troubleshoot, or schedule the weekly literature crawl; refresh a literature archive; process the pending-summary queue; regenerate EndNote packages; or prepare a reviewable Zotero import manifest without modifying Zotero.
 ---
 
 # Weekly Literature Crawl
@@ -49,17 +49,28 @@ python "<skill-dir>\scripts\weekly_literature_crawl.py" `
 
 Use `rebuild` for a network-free summary-index rebuild. Use `endnote --all` for a full export or `endnote --since-days 7` for a recent export.
 
+Generate a read-only Zotero review plan:
+
+```powershell
+python "<skill-dir>\scripts\weekly_literature_crawl.py" `
+  --project-root "<project-root>" zotero-plan --all
+```
+
+This command writes JSON/CSV manifests only. Delegate actual imports separately to `zotero-link-import` after explicit confirmation.
+
 ## Configuration
 
 Resolve configuration from `--config`, `AI_LITERATURE_CONFIG`, or `<project-root>/config.yaml`. Initialize the project with `python init_project.py` when configuration is absent. Keep API keys in the configured environment variable, never in YAML.
 
 ## Scheduling
 
-After explicit approval, use the project scripts directly:
+After explicit approval, use the scheduler implementations in this skill. Pass the project root when the skill is installed elsewhere:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File "<project-root>\scheduler_crawl_endnote.ps1"
-powershell -ExecutionPolicy Bypass -File "<project-root>\scheduler_summary.ps1"
+powershell -ExecutionPolicy Bypass -File "<skill-dir>\scripts\scheduler_crawl_endnote.ps1" `
+  -ProjectRoot "<project-root>"
+powershell -ExecutionPolicy Bypass -File "<skill-dir>\scripts\scheduler_summary.ps1" `
+  -ProjectRoot "<project-root>"
 ```
 
 Do not register, replace, or remove scheduled tasks without approval.
@@ -70,4 +81,5 @@ Do not register, replace, or remove scheduled tasks without approval.
 - Do not store browser profiles, credentials, downloads, or runtime state in this skill.
 - Do not pass `--confirm-download` until the user approves a live crawl.
 - Do not run an LLM-backed operation when its configured API Key environment variable is missing.
+- Treat `zotero-plan` as preparation only; do not claim that it checks Zotero duplicates.
 - Do not modify Zotero through this skill; delegate separately to `zotero-link-import` after confirmation.
