@@ -146,7 +146,10 @@ def summarize_pending_article(
     atomic_write_json(metadata_path, metadata)
     summary_manager.upsert_article(fetched, classification, summary_text)
     if cleanup_metadata_path:
-        cleanup_metadata_path.unlink(missing_ok=True)
+        revalidated_cleanup_path = validated_cleanup_metadata_path(metadata, metadata_path)
+        if revalidated_cleanup_path != cleanup_metadata_path:
+            raise ValueError("Pending metadata cleanup path changed before deletion")
+        revalidated_cleanup_path.unlink(missing_ok=True)
     metadata_path.unlink(missing_ok=True)
 
 

@@ -360,6 +360,27 @@ def test_pending_summary_recovers_when_queue_marker_update_fails(
     cleanup_metadata["queue_id"] = expected_queue_id
     cleanup_path.write_text(json.dumps(cleanup_metadata), encoding="utf-8")
     LLM.category = "others"
+
+    def replace_cleanup_after_upsert(*args):
+        original_upsert(*args)
+        replaced = json.loads(cleanup_path.read_text(encoding="utf-8"))
+        replaced["queue_id"] = "replaced-after-validation"
+        cleanup_path.write_text(json.dumps(replaced), encoding="utf-8")
+
+    monkeypatch.setattr(manager, "upsert_article", replace_cleanup_after_upsert)
+    with pytest.raises(ValueError, match="another article"):
+        run_summary.summarize_pending_article(
+            pending_metadata,
+            archive,
+            archive.categories(),
+            LLM(),
+            manager,
+        )
+
+    assert cleanup_path.exists()
+    cleanup_metadata["queue_id"] = expected_queue_id
+    cleanup_path.write_text(json.dumps(cleanup_metadata), encoding="utf-8")
+    monkeypatch.setattr(manager, "upsert_article", original_upsert)
     run_summary.summarize_pending_article(
         pending_metadata,
         archive,
