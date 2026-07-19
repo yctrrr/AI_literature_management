@@ -180,11 +180,13 @@ def publish_plan_artifacts(
     latest_csv: Path,
 ) -> None:
     targets = [json_path, csv_path, latest_json, latest_csv]
-    staged = [create_staging_path(target) for target in targets]
+    staged: list[Path] = []
     backups: dict[Path, Path] = {}
     published: list[Path] = []
     preserved_backups: set[Path] = set()
     try:
+        for target in targets:
+            staged.append(create_staging_path(target))
         atomic_write_json(staged[0], document)
         write_csv(staged[1], records, plan_id=plan_id)
         atomic_write_json(staged[2], document)
@@ -209,22 +211,54 @@ def publish_plan_artifacts(
                 rollback_failures.append((target, rollback_error))
                 if backup and backup.exists():
                     preserved_backups.add(backup)
-        if rollback_failures:
-            details = "; ".join(
-                f"{target}: {error}" for target, error in rollback_failures
-            )
-            preserved = ", ".join(str(path) for path in sorted(preserved_backups))
+        cleanup_failures = cleanup_temporary_paths(
+            [*staged, *backups.values()],
+            preserved=preserved_backups,
+        )
+        if rollback_failures or cleanup_failures:
+            details = format_recovery_failures(rollback_failures, cleanup_failures)
+            if preserved_backups:
+                preserved = ", ".join(
+                    str(path) for path in sorted(preserved_backups)
+                )
+                details += f"; preserved backups: {preserved}"
             raise RuntimeError(
                 f"Plan publication failed ({publish_error}); rollback incomplete: "
-                f"{details}; preserved backups: {preserved or 'none'}"
+                f"{details}"
             ) from publish_error
         raise
-    finally:
-        for temporary_path in staged:
-            temporary_path.unlink(missing_ok=True)
-        for backup in backups.values():
-            if backup not in preserved_backups:
-                backup.unlink(missing_ok=True)
+    cleanup_failures = cleanup_temporary_paths([*staged, *backups.values()])
+    if cleanup_failures:
+        details = format_recovery_failures([], cleanup_failures)
+        raise RuntimeError(f"Plan published but temporary cleanup failed: {details}")
+
+
+def cleanup_temporary_paths(
+    paths: list[Path],
+    *,
+    preserved: set[Path] | None = None,
+) -> list[tuple[Path, Exception]]:
+    preserved = preserved or set()
+    failures: list[tuple[Path, Exception]] = []
+    for path in paths:
+        if path in preserved:
+            continue
+        try:
+            path.unlink(missing_ok=True)
+        except Exception as error:
+            failures.append((path, error))
+    return failures
+
+
+def format_recovery_failures(
+    rollback_failures: list[tuple[Path, Exception]],
+    cleanup_failures: list[tuple[Path, Exception]],
+) -> str:
+    parts = [
+        *(f"restore {path}: {error}" for path, error in rollback_failures),
+        *(f"cleanup {path}: {error}" for path, error in cleanup_failures),
+    ]
+    return "; ".join(parts)
 
 
 def create_staging_path(target: Path, *, suffix: str = ".staged") -> Path:

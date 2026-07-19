@@ -431,6 +431,86 @@ def test_plan_publication_preserves_backup_when_restore_also_fails(
     assert str(backups[0]) in str(captured.value)
 
 
+def test_cleanup_failure_does_not_mask_publication_and_rollback_errors(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    archive = tmp_path / "archive"
+    write_record(
+        archive / "Energy",
+        "paper",
+        title="Original Paper",
+        doi="10.1000/paper",
+        source_url="https://example.test/paper",
+        category="Energy",
+    )
+    output = tmp_path / "output"
+    first = export_zotero_plan(archive, output, since_days=None)
+    latest_csv = Path(first["latest_csv"])
+    original_replace = prepare_zotero_import.os.replace
+    original_unlink = Path.unlink
+
+    def fail_latest_csv_destination(source, destination):
+        if Path(destination) == latest_csv:
+            raise OSError("latest CSV unavailable")
+        return original_replace(source, destination)
+
+    def fail_staged_cleanup(path, *args, **kwargs):
+        if str(path).endswith(".staged"):
+            raise PermissionError("staging file locked")
+        return original_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(
+        prepare_zotero_import.os,
+        "replace",
+        fail_latest_csv_destination,
+    )
+    monkeypatch.setattr(Path, "unlink", fail_staged_cleanup)
+
+    with pytest.raises(RuntimeError, match="rollback incomplete") as captured:
+        export_zotero_plan(archive, output, since_days=None)
+
+    assert isinstance(captured.value.__cause__, OSError)
+    assert "latest CSV unavailable" in str(captured.value)
+    assert "staging file locked" in str(captured.value)
+
+
+def test_partial_staging_allocation_is_cleaned_up(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    archive = tmp_path / "archive"
+    write_record(
+        archive / "Energy",
+        "paper",
+        title="Paper",
+        doi="10.1000/paper",
+        source_url="https://example.test/paper",
+        category="Energy",
+    )
+    output = tmp_path / "output"
+    original_create = prepare_zotero_import.create_staging_path
+    allocation_count = 0
+
+    def fail_second_allocation(target, **kwargs):
+        nonlocal allocation_count
+        allocation_count += 1
+        if allocation_count == 2:
+            raise OSError("allocation failed")
+        return original_create(target, **kwargs)
+
+    monkeypatch.setattr(
+        prepare_zotero_import,
+        "create_staging_path",
+        fail_second_allocation,
+    )
+
+    with pytest.raises(OSError, match="allocation failed"):
+        export_zotero_plan(archive, output, since_days=None)
+
+    assert list(output.iterdir()) == []
+
+
 @pytest.mark.parametrize("prefix", ["=", "+", "-", "@"])
 def test_zotero_plan_neutralizes_csv_formula_prefixes(prefix: str) -> None:
     value = prefix + "dangerous"
