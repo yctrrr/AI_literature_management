@@ -183,6 +183,7 @@ def publish_plan_artifacts(
     staged = [create_staging_path(target) for target in targets]
     backups: dict[Path, Path] = {}
     published: list[Path] = []
+    preserved_backups: set[Path] = set()
     try:
         atomic_write_json(staged[0], document)
         write_csv(staged[1], records, plan_id=plan_id)
@@ -195,17 +196,35 @@ def publish_plan_artifacts(
                 backups[target] = backup
             os.replace(staged_path, target)
             published.append(target)
-    except Exception:
+    except Exception as publish_error:
+        rollback_failures: list[tuple[Path, Exception]] = []
         for target in reversed(targets):
-            if target in published:
-                target.unlink(missing_ok=True)
             backup = backups.get(target)
-            if backup and backup.exists():
-                os.replace(backup, target)
+            try:
+                if target in published:
+                    target.unlink(missing_ok=True)
+                if backup and backup.exists():
+                    os.replace(backup, target)
+            except Exception as rollback_error:
+                rollback_failures.append((target, rollback_error))
+                if backup and backup.exists():
+                    preserved_backups.add(backup)
+        if rollback_failures:
+            details = "; ".join(
+                f"{target}: {error}" for target, error in rollback_failures
+            )
+            preserved = ", ".join(str(path) for path in sorted(preserved_backups))
+            raise RuntimeError(
+                f"Plan publication failed ({publish_error}); rollback incomplete: "
+                f"{details}; preserved backups: {preserved or 'none'}"
+            ) from publish_error
         raise
     finally:
-        for temporary_path in [*staged, *backups.values()]:
+        for temporary_path in staged:
             temporary_path.unlink(missing_ok=True)
+        for backup in backups.values():
+            if backup not in preserved_backups:
+                backup.unlink(missing_ok=True)
 
 
 def create_staging_path(target: Path, *, suffix: str = ".staged") -> Path:

@@ -383,6 +383,54 @@ def test_plan_publication_rolls_back_each_failed_replace(
     assert after == before
 
 
+def test_plan_publication_preserves_backup_when_restore_also_fails(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    archive = tmp_path / "archive"
+    _, metadata_path = write_record(
+        archive / "Energy",
+        "paper",
+        title="Original Paper",
+        doi="10.1000/paper",
+        source_url="https://example.test/paper",
+        category="Energy",
+    )
+    output = tmp_path / "output"
+    first = export_zotero_plan(archive, output, since_days=None)
+    latest_json = Path(first["latest_json"])
+    latest_csv = Path(first["latest_csv"])
+    original_json = latest_json.read_bytes()
+    original_csv = latest_csv.read_bytes()
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    metadata["title"] = "Updated Paper"
+    metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+
+    original_replace = prepare_zotero_import.os.replace
+
+    def fail_latest_csv_destination(source, destination):
+        if Path(destination) == latest_csv:
+            raise OSError("latest CSV unavailable")
+        return original_replace(source, destination)
+
+    monkeypatch.setattr(
+        prepare_zotero_import.os,
+        "replace",
+        fail_latest_csv_destination,
+    )
+
+    with pytest.raises(RuntimeError, match="rollback incomplete") as captured:
+        export_zotero_plan(archive, output, since_days=None)
+
+    assert isinstance(captured.value.__cause__, OSError)
+    assert latest_json.read_bytes() == original_json
+    assert not latest_csv.exists()
+    backups = list(output.glob(f".{latest_csv.name}.*.backup"))
+    assert len(backups) == 1
+    assert backups[0].read_bytes() == original_csv
+    assert str(backups[0]) in str(captured.value)
+
+
 @pytest.mark.parametrize("prefix", ["=", "+", "-", "@"])
 def test_zotero_plan_neutralizes_csv_formula_prefixes(prefix: str) -> None:
     value = prefix + "dangerous"
