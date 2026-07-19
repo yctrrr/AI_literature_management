@@ -211,7 +211,9 @@ def main(argv: list[str] | None = None) -> int:
     try:
         project_root = resolve_project_root(args.project_root)
         config_path = resolve_config(project_root, args.config)
-        config = validate_config(config_path, project_root)
+        config = None
+        if args.operation != "zotero-plan":
+            config = validate_config(config_path, project_root)
         if args.operation == "check":
             print(
                 json.dumps(

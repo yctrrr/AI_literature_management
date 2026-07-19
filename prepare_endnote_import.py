@@ -4,8 +4,11 @@ import argparse
 import csv
 import hashlib
 import json
+import os
+import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from urllib.parse import urlsplit, urlunsplit
 
 from src.config import default_config_path, load_config
 
@@ -103,7 +106,7 @@ def load_records(
             continue
         pdf_path = resolve_pdf_path(metadata, metadata_path)
         attachment_paths = resolve_attachment_paths(metadata, metadata_path)
-        key = metadata.get("doi") or metadata.get("source_url") or str(pdf_path)
+        key = canonical_record_identity(metadata, pdf_path)
         if key in seen:
             merge_attachment_paths(seen[key], attachment_paths)
             continue
@@ -227,6 +230,41 @@ def file_signature(path: Path) -> tuple[int, str]:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             hasher.update(chunk)
     return path.stat().st_size, hasher.hexdigest()
+
+
+def canonical_record_identity(metadata: dict, pdf_path: Path) -> str:
+    doi = normalize_doi(metadata.get("doi"))
+    if doi:
+        return f"doi:{doi}"
+    source_url = normalize_source_url(metadata.get("source_url"))
+    if source_url:
+        return f"url:{source_url}"
+    return f"pdf:{os.path.normcase(str(pdf_path.expanduser().resolve()))}"
+
+
+def normalize_doi(value: object) -> str:
+    text = str(value or "").strip().lower()
+    text = re.sub(r"^doi:\s*", "", text)
+    text = re.sub(r"^https?://(?:dx\.)?doi\.org/", "", text)
+    return text.strip()
+
+
+def normalize_source_url(value: object) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    parsed = urlsplit(text)
+    if not parsed.scheme or not parsed.netloc:
+        return text
+    return urlunsplit(
+        (
+            parsed.scheme.lower(),
+            parsed.netloc.lower(),
+            parsed.path,
+            parsed.query,
+            "",
+        )
+    )
 
 
 def write_ris(path: Path, records: list[dict], group: str) -> None:

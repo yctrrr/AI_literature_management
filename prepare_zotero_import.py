@@ -4,15 +4,20 @@ import argparse
 import csv
 import hashlib
 import json
+import os
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
-from prepare_endnote_import import load_records
-from src.config import default_config_path, load_config
+import yaml
+
+from prepare_endnote_import import canonical_record_identity, load_records
 from src.utils import atomic_write_json
 
 
 DEFAULT_PREFIX = "AI_literature_management_zotero"
+CONFIG_ENV = "AI_LITERATURE_CONFIG"
+ARCHIVE_ENV = "AI_LITERATURE_ARCHIVE_ROOT"
 
 
 def parse_args() -> argparse.Namespace:
@@ -41,12 +46,44 @@ def main() -> int:
     if args.since_days < 0:
         print("ERROR: --since-days must be zero or greater")
         return 2
-    archive_root = args.archive_root
-    if archive_root is None:
-        archive_root = load_config(args.config or default_config_path()).paths.archive_root
-    since_days = None if args.all else args.since_days
-    export_zotero_plan(archive_root, args.output_dir, since_days=since_days)
-    return 0
+    try:
+        archive_root = resolve_archive_root(args.archive_root, args.config)
+        since_days = None if args.all else args.since_days
+        export_zotero_plan(archive_root, args.output_dir, since_days=since_days)
+        return 0
+    except (OSError, RuntimeError, ValueError, yaml.YAMLError) as error:
+        print(f"ERROR: {error}")
+        return 2
+
+
+def resolve_archive_root(
+    explicit_archive: Path | None = None,
+    config_path: Path | None = None,
+) -> Path:
+    if explicit_archive:
+        archive_root = explicit_archive.expanduser().resolve()
+    elif os.environ.get(ARCHIVE_ENV):
+        archive_root = Path(os.environ[ARCHIVE_ENV]).expanduser().resolve()
+    else:
+        selected_config = config_path or (
+            Path(os.environ[CONFIG_ENV])
+            if os.environ.get(CONFIG_ENV)
+            else Path("config.yaml")
+        )
+        selected_config = selected_config.expanduser().resolve()
+        if not selected_config.is_file():
+            raise RuntimeError(f"Initialized configuration not found: {selected_config}")
+        raw = yaml.safe_load(selected_config.read_text(encoding="utf-8")) or {}
+        value = (raw.get("paths") or {}).get("archive_root")
+        if not value:
+            raise RuntimeError("Configuration is missing paths.archive_root")
+        archive_root = Path(str(value)).expanduser()
+        if not archive_root.is_absolute():
+            archive_root = selected_config.parent / archive_root
+        archive_root = archive_root.resolve()
+    if not archive_root.is_dir():
+        raise RuntimeError(f"Archive root does not exist: {archive_root}")
+    return archive_root
 
 
 def export_zotero_plan(
@@ -78,7 +115,7 @@ def export_zotero_plan(
         "record_count": len(records),
         "records": records,
     }
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     json_path = output_dir / f"{DEFAULT_PREFIX}_{timestamp}.json"
     csv_path = output_dir / f"{DEFAULT_PREFIX}_{timestamp}.csv"
     latest_json = output_dir / f"{DEFAULT_PREFIX}_latest.json"
@@ -112,25 +149,30 @@ def is_finalized_record(record: dict, archive_root: Path) -> bool:
         relative = metadata_path.resolve().relative_to(archive_root)
     except (OSError, ValueError):
         return False
-    return bool(relative.parts and not any(part.startswith("_") for part in relative.parts))
+    return bool(
+        len(relative.parts) >= 2
+        and not any(part.startswith("_") for part in relative.parts)
+    )
 
 
 def prepare_record(record: dict) -> dict:
     metadata_path = Path(record["_metadata_path"]).resolve()
     category = metadata_path.parent.name
-    identity = (
-        str(record.get("doi") or "").strip().lower()
-        or str(record.get("source_url") or "").strip()
-        or str(Path(record.get("pdf_path") or "").resolve())
-    )
+    identity = canonical_record_identity(record, Path(record.get("pdf_path") or ""))
     record_id = hashlib.sha256(identity.encode("utf-8")).hexdigest()
+    raw_authors = record.get("authors") or []
+    authors = (
+        [raw_authors]
+        if isinstance(raw_authors, str)
+        else [str(author) for author in raw_authors]
+    )
     return {
         "record_id": record_id,
         "status": "ready_for_review",
         "zotero_duplicate_check": "not_run",
         "proposed_collection": category,
         "title": str(record.get("title") or Path(record.get("pdf_path") or "").stem),
-        "authors": list(record.get("authors") or []),
+        "authors": authors,
         "year": str(record.get("year") or ""),
         "journal": str(record.get("journal") or ""),
         "doi": str(record.get("doi") or ""),
@@ -163,14 +205,35 @@ def write_csv(path: Path, records: list[dict]) -> None:
         "source_timestamp",
         "attachment_issue",
     ]
-    with path.open("w", encoding="utf-8-sig", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fields)
-        writer.writeheader()
-        for record in records:
-            row = {key: record.get(key, "") for key in fields}
-            row["authors"] = "; ".join(record.get("authors") or [])
-            row["attachment_paths"] = "; ".join(record.get("attachment_paths") or [])
-            writer.writerow(row)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temp_name = tempfile.mkstemp(
+        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
+    )
+    os.close(descriptor)
+    try:
+        with Path(temp_name).open("w", encoding="utf-8-sig", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=fields)
+            writer.writeheader()
+            for record in records:
+                row = {key: safe_csv_cell(record.get(key, "")) for key in fields}
+                row["authors"] = safe_csv_cell("; ".join(record.get("authors") or []))
+                row["attachment_paths"] = safe_csv_cell(
+                    "; ".join(record.get("attachment_paths") or [])
+                )
+                writer.writerow(row)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp_name, path)
+    except Exception:
+        Path(temp_name).unlink(missing_ok=True)
+        raise
+
+
+def safe_csv_cell(value: object) -> str:
+    text = str(value if value is not None else "")
+    if text.lstrip().startswith(("=", "+", "-", "@")):
+        return "'" + text
+    return text
 
 
 if __name__ == "__main__":

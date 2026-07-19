@@ -204,6 +204,34 @@ def test_zotero_plan_forwards_read_only_export(tmp_path: Path) -> None:
     ]
 
 
+def test_zotero_plan_skips_canonical_zotero_validation(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    wrapper = load_wrapper()
+    project, config = make_project(tmp_path)
+    calls = []
+
+    monkeypatch.setattr(
+        wrapper,
+        "validate_config",
+        lambda *_args: (_ for _ in ()).throw(AssertionError("must not load Zotero config")),
+    )
+    monkeypatch.setattr(
+        wrapper.subprocess,
+        "run",
+        lambda command, **_kwargs: calls.append(command)
+        or type("Result", (), {"returncode": 0})(),
+    )
+
+    result = wrapper.main(
+        ["--project-root", str(project), "--config", str(config), "zotero-plan", "--all"]
+    )
+
+    assert result == 0
+    assert calls and str(project / "prepare_zotero_import.py") in calls[0]
+
+
 def test_config_validation_rejects_missing_paths(tmp_path: Path) -> None:
     wrapper = load_wrapper()
     project, config = make_project(tmp_path)
