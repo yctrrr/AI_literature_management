@@ -127,10 +127,11 @@ def test_pending_summary_remains_retryable_after_index_failure(
 
     class LLM:
         max_pdf_chars = 100
+        category = "Energy"
 
-        @staticmethod
-        def classify(*_args):
-            return Classification("Energy", 1.0, "match", "classified")
+        @classmethod
+        def classify(cls, *_args):
+            return Classification(cls.category, 1.0, "match", "classified")
 
         @staticmethod
         def summarize(*_args):
@@ -262,10 +263,11 @@ def test_pending_summary_recovers_when_queue_marker_update_fails(
 
     class LLM:
         max_pdf_chars = 100
+        category = "Energy"
 
-        @staticmethod
-        def classify(*_args):
-            return Classification("Energy", 1.0, "match", "classified")
+        @classmethod
+        def classify(cls, *_args):
+            return Classification(cls.category, 1.0, "match", "classified")
 
         @staticmethod
         def summarize(*_args):
@@ -275,11 +277,16 @@ def test_pending_summary_recovers_when_queue_marker_update_fails(
     manager.ensure_index()
     monkeypatch.setattr(run_summary, "extract_pdf_text", lambda *_args, **_kwargs: "text")
     original_marker_write = run_summary.atomic_write_json
-    monkeypatch.setattr(
-        run_summary,
-        "atomic_write_json",
-        lambda *_args: (_ for _ in ()).throw(OSError("marker write failed")),
-    )
+    marker_writes = 0
+
+    def fail_final_marker_write(path, value):
+        nonlocal marker_writes
+        marker_writes += 1
+        if marker_writes == 1:
+            return original_marker_write(path, value)
+        raise OSError("marker write failed")
+
+    monkeypatch.setattr(run_summary, "atomic_write_json", fail_final_marker_write)
 
     with pytest.raises(OSError, match="marker write failed"):
         run_summary.summarize_pending_article(
@@ -292,6 +299,22 @@ def test_pending_summary_recovers_when_queue_marker_update_fails(
 
     assert pending_metadata.exists()
     assert not pending_pdf.exists()
+    collision_dir = archive_root / "A-collision"
+    collision_dir.mkdir()
+    collision_pdf = collision_dir / "paper.pdf"
+    collision_pdf.write_bytes(b"%PDF-unrelated")
+    (collision_dir / "paper.metadata.json").write_text(
+        json.dumps(
+            {
+                "title": "Marker Retry Paper",
+                "source_url": "https://example.test/unrelated",
+                "queue_id": "different-queue",
+                "pdf_path": str(collision_pdf),
+            }
+        ),
+        encoding="utf-8",
+    )
+    LLM.category = "others"
     monkeypatch.setattr(run_summary, "atomic_write_json", original_marker_write)
     run_summary.summarize_pending_article(
         pending_metadata,
@@ -302,5 +325,7 @@ def test_pending_summary_recovers_when_queue_marker_update_fails(
     )
 
     assert not pending_metadata.exists()
-    assert len(list((archive_root / "Energy").glob("*.pdf"))) == 1
-    assert len(list((archive_root / "Energy").glob("*.metadata.json"))) == 1
+    assert collision_pdf.exists()
+    assert not list((archive_root / "Energy").glob("*.metadata.json"))
+    assert len(list((archive_root / "others").glob("*.pdf"))) == 1
+    assert len(list((archive_root / "others").glob("*.metadata.json"))) == 1

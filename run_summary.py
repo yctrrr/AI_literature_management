@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 import sys
+import uuid
 from pathlib import Path
 
 from src.archive_manager import PENDING_SUMMARY_DIR, ArchiveManager
@@ -94,11 +95,16 @@ def summarize_pending_article(
     summary_manager: SummaryManager,
 ) -> None:
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    if not metadata.get("queue_id"):
+        metadata["queue_id"] = uuid.uuid4().hex
+        atomic_write_json(metadata_path, metadata)
+    recovered_metadata_path = None
     pdf_path = resolve_pdf_path(metadata, metadata_path)
     if not pdf_path.is_file():
         recovered = find_finalized_metadata(metadata, metadata_path)
         if recovered:
-            metadata.update(recovered)
+            recovered_metadata_path, recovered_metadata = recovered
+            metadata.update(recovered_metadata)
             pdf_path = resolve_pdf_path(metadata, metadata_path)
     if not pdf_path.is_file():
         raise FileNotFoundError(f"Missing PDF for metadata: {metadata_path}")
@@ -126,6 +132,11 @@ def summarize_pending_article(
     metadata["attachment_path"] = str(fetched.attachment_path) if fetched.attachment_path else ""
     atomic_write_json(metadata_path, metadata)
     summary_manager.upsert_article(fetched, classification, summary_text)
+    if (
+        recovered_metadata_path
+        and recovered_metadata_path.parent.resolve() != fetched.pdf_path.parent.resolve()
+    ):
+        recovered_metadata_path.unlink(missing_ok=True)
     metadata_path.unlink(missing_ok=True)
 
 
@@ -144,11 +155,13 @@ def resolve_attachment_path(metadata: dict) -> Path | None:
     return None
 
 
-def find_finalized_metadata(metadata: dict, pending_path: Path) -> dict | None:
+def find_finalized_metadata(metadata: dict, pending_path: Path) -> tuple[Path, dict] | None:
     archive_root = pending_path.parent.parent
+    queue_id = str(metadata.get("queue_id") or "").strip()
     doi = str(metadata.get("doi") or "").strip().lower()
     source_url = str(metadata.get("source_url") or "").strip()
     title = str(metadata.get("title") or "").strip()
+    candidates: list[tuple[Path, dict]] = []
     for candidate_path in sorted(archive_root.glob("*/*.metadata.json")):
         if candidate_path.parent.name.startswith("_"):
             continue
@@ -159,14 +172,29 @@ def find_finalized_metadata(metadata: dict, pending_path: Path) -> dict | None:
         candidate_pdf = Path(candidate.get("pdf_path") or "")
         if not candidate_pdf.is_file():
             continue
-        same_name = candidate_path.name == pending_path.name
-        same_doi = bool(doi and str(candidate.get("doi") or "").strip().lower() == doi)
-        same_url = bool(
-            source_url and str(candidate.get("source_url") or "").strip() == source_url
-        )
-        same_title = bool(title and str(candidate.get("title") or "").strip() == title)
-        if same_name or same_doi or same_url or same_title:
-            return candidate
+        candidates.append((candidate_path, candidate))
+
+    matchers = [
+        lambda item: bool(queue_id and str(item[1].get("queue_id") or "") == queue_id),
+        lambda item: bool(
+            doi and str(item[1].get("doi") or "").strip().lower() == doi
+        ),
+        lambda item: bool(
+            source_url
+            and str(item[1].get("source_url") or "").strip() == source_url
+        ),
+        lambda item: bool(
+            title
+            and item[0].name == pending_path.name
+            and str(item[1].get("title") or "").strip() == title
+        ),
+    ]
+    for matcher in matchers:
+        matches = [item for item in candidates if matcher(item)]
+        if len(matches) == 1:
+            return matches[0]
+        if len(matches) > 1:
+            return None
     return None
 
 
