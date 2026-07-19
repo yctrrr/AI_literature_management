@@ -1,5 +1,9 @@
 # AI Literature Management
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
+[![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-3776AB.svg)](./requirements.txt)
+[![skills.sh](https://skills.sh/b/yctrrr/AI_literature_management)](https://skills.sh/yctrrr/AI_literature_management)
+
 <!-- README-I18N:START -->
 
 **English** | [中文](./README.zh.md)
@@ -157,10 +161,16 @@ The repository includes:
 - `zotero-link-import`: link an existing PDF into an exact Zotero collection after confirmation.
 - `zotero-docx-paper-writing`: coordinate scoped Word manuscript edits with backups, Zotero safety, and package audits.
 
-Install the repository skills after the GitHub repository is renamed:
+Install all repository skills globally for supported agents:
 
 ```powershell
 npx skills add yctrrr/AI_literature_management -g -y
+```
+
+List the available skills without installing:
+
+```powershell
+npx skills add yctrrr/AI_literature_management -l
 ```
 
 Zotero integration is opt-in. Read `skills/zotero-link-import/SKILL.md` and authorize installation before running its installer. Local endpoint tokens and generated XPI files remain outside Git.
@@ -246,3 +256,7 @@ python -m pytest -q
 ```
 
 The test suite is network-free and does not start Zotero, Word, a browser, or an LLM.
+
+## License
+
+MIT.

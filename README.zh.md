@@ -1,5 +1,9 @@
 # AI Literature Management
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
+[![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-3776AB.svg)](./requirements.txt)
+[![skills.sh](https://skills.sh/b/yctrrr/AI_literature_management)](https://skills.sh/yctrrr/AI_literature_management)
+
 <!-- README-I18N:START -->
 
 [English](./README.md) | **中文**
@@ -157,10 +161,16 @@ python .\prepare_zotero_import.py --config .\config.yaml --all
 - `zotero-link-import`：在确认后将现有 PDF 链接到准确的 Zotero collection。
 - `zotero-docx-paper-writing`：通过备份、Zotero 安全约束和文档包审计协调限定范围的 Word 修改。
 
-GitHub 仓库完成重命名后，可安装全部 Skills：
+为支持的 Agent 全局安装仓库中的全部 Skills：
 
 ```powershell
 npx skills add yctrrr/AI_literature_management -g -y
+```
+
+仅查看可用 Skills，不安装：
+
+```powershell
+npx skills add yctrrr/AI_literature_management -l
 ```
 
 Zotero 集成为可选功能。运行安装器前先阅读 `skills/zotero-link-import/SKILL.md` 并取得安装授权。本地 endpoint token 和生成的 XPI 不进入 Git。
@@ -246,3 +256,7 @@ python -m pytest -q
 ```
 
 测试套件不访问网络，也不会启动 Zotero、Word、浏览器或 LLM。
+
+## 许可证
+
+MIT。

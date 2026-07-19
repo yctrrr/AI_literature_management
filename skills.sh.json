@@ -1,0 +1,23 @@
+{
+  "$schema": "https://skills.sh/schemas/skills.sh.schema.json",
+  "notGrouped": "bottom",
+  "groupings": [
+    {
+      "title": "Literature Workflows",
+      "description": "Discover, ingest, organize, and locate academic literature.",
+      "skills": [
+        "weekly-literature-crawl",
+        "literature-ingest",
+        "literature-locator"
+      ]
+    },
+    {
+      "title": "Zotero and Writing",
+      "description": "Link local PDFs and edit citation-managed manuscripts safely.",
+      "skills": [
+        "zotero-link-import",
+        "zotero-docx-paper-writing"
+      ]
+    }
+  ]
+}
