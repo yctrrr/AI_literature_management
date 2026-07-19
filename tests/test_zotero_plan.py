@@ -511,6 +511,38 @@ def test_partial_staging_allocation_is_cleaned_up(
     assert list(output.iterdir()) == []
 
 
+def test_failed_backup_move_cleans_empty_placeholder(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    archive = tmp_path / "archive"
+    write_record(
+        archive / "Energy",
+        "paper",
+        title="Paper",
+        doi="10.1000/paper",
+        source_url="https://example.test/paper",
+        category="Energy",
+    )
+    output = tmp_path / "output"
+    export_zotero_plan(archive, output, since_days=None)
+    before = {path.name: path.read_bytes() for path in output.iterdir()}
+    original_replace = prepare_zotero_import.os.replace
+
+    def fail_backup_move(source, destination):
+        if str(destination).endswith(".backup"):
+            raise OSError("backup move failed")
+        return original_replace(source, destination)
+
+    monkeypatch.setattr(prepare_zotero_import.os, "replace", fail_backup_move)
+
+    with pytest.raises(OSError, match="backup move failed"):
+        export_zotero_plan(archive, output, since_days=None)
+
+    after = {path.name: path.read_bytes() for path in output.iterdir()}
+    assert after == before
+
+
 @pytest.mark.parametrize("prefix", ["=", "+", "-", "@"])
 def test_zotero_plan_neutralizes_csv_formula_prefixes(prefix: str) -> None:
     value = prefix + "dangerous"

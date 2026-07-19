@@ -182,6 +182,7 @@ def publish_plan_artifacts(
     targets = [json_path, csv_path, latest_json, latest_csv]
     staged: list[Path] = []
     backups: dict[Path, Path] = {}
+    allocated_backups: list[Path] = []
     published: list[Path] = []
     preserved_backups: set[Path] = set()
     try:
@@ -194,6 +195,7 @@ def publish_plan_artifacts(
         for staged_path, target in zip(staged, targets, strict=True):
             if target.exists():
                 backup = create_staging_path(target, suffix=".backup")
+                allocated_backups.append(backup)
                 os.replace(target, backup)
                 backups[target] = backup
             os.replace(staged_path, target)
@@ -212,7 +214,7 @@ def publish_plan_artifacts(
                 if backup and backup.exists():
                     preserved_backups.add(backup)
         cleanup_failures = cleanup_temporary_paths(
-            [*staged, *backups.values()],
+            [*staged, *allocated_backups],
             preserved=preserved_backups,
         )
         if rollback_failures or cleanup_failures:
@@ -227,7 +229,7 @@ def publish_plan_artifacts(
                 f"{details}"
             ) from publish_error
         raise
-    cleanup_failures = cleanup_temporary_paths([*staged, *backups.values()])
+    cleanup_failures = cleanup_temporary_paths([*staged, *allocated_backups])
     if cleanup_failures:
         details = format_recovery_failures([], cleanup_failures)
         raise RuntimeError(f"Plan published but temporary cleanup failed: {details}")
