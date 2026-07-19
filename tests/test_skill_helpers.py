@@ -139,6 +139,7 @@ def test_skill_packages_are_self_contained() -> None:
     expected = {
         "literature-ingest",
         "literature-locator",
+        "weekly-literature-crawl",
         "zotero-link-import",
         "zotero-docx-paper-writing",
     }

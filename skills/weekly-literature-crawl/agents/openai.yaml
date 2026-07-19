@@ -1,0 +1,4 @@
+interface:
+  display_name: "Weekly Literature Crawl"
+  short_description: "Run and manage the weekly literature workflow."
+  default_prompt: "Use $weekly-literature-crawl to check and run my configured weekly literature workflow."

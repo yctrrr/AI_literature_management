@@ -8,6 +8,18 @@
 
 AI Literature Management is a local-first workflow for discovering, downloading, organizing, locating, summarizing, and citing academic literature. The automated crawler currently targets Nature-platform articles, while bundled agent skills support broader DOI, arXiv, publisher, local-library, Zotero, and DOCX workflows.
 
+## Purpose
+
+This project connects recurring literature collection with the downstream research workflow:
+
+1. Discover relevant Nature-platform articles from configured feeds and searches.
+2. Download accessible PDFs and supplements into a controlled local archive.
+3. Queue new papers for separate LLM classification and summarization.
+4. Rebuild categorized summaries and create EndNote import packages.
+5. Use bundled skills to ingest other papers, locate local files, link PDFs to Zotero, and edit citation-managed Word manuscripts safely.
+
+The project is not a paywall bypass, a cloud literature database, or an unattended Zotero/Word mutation service. Files and runtime state remain local, and mutating integrations require explicit authorization.
+
 ## Features
 
 - Discovers Nature articles from configurable feeds and controlled search fallback.
@@ -18,7 +30,7 @@ AI Literature Management is a local-first workflow for discovering, downloading,
 - Maintains a structured `summary_index.json` and categorized Markdown summary.
 - Produces recent or full RIS/ENW import packages and attachment reports.
 - Avoids duplicate downloads using DOI, source URL, metadata, and filenames.
-- Includes four reusable agent skills for ingestion, local search, Zotero linked imports, and citation-safe DOCX writing.
+- Includes five reusable agent skills for weekly crawling, ingestion, local search, Zotero linked imports, and citation-safe DOCX writing.
 - Uses initialized local configuration instead of machine-specific default paths.
 
 ## Architecture
@@ -34,6 +46,7 @@ AI_literature_management/
   scheduler_summary.ps1
   src/
   skills/
+    weekly-literature-crawl/
     literature-ingest/
     literature-locator/
     zotero-link-import/
@@ -129,6 +142,7 @@ python .\prepare_endnote_import.py --config .\config.yaml --all
 
 The repository includes:
 
+- `weekly-literature-crawl`: validate and orchestrate dry runs, approved weekly downloads, pending summaries, summary rebuilds, and EndNote exports.
 - `literature-ingest`: resolve, duplicate-check, classify, and download literature after confirmation.
 - `literature-locator`: find local papers and likely supplements without modifying files.
 - `zotero-link-import`: link an existing PDF into an exact Zotero collection after confirmation.
@@ -141,6 +155,38 @@ npx skills add yctrrr/AI_literature_management -g -y
 ```
 
 Zotero integration is opt-in. Read `skills/zotero-link-import/SKILL.md` and authorize installation before running its installer. Local endpoint tokens and generated XPI files remain outside Git.
+
+## Weekly Skill Workflow
+
+Validate the initialized project without using the network:
+
+```powershell
+python .\skills\weekly-literature-crawl\scripts\weekly_literature_crawl.py `
+  --project-root . check
+```
+
+Preview candidate discovery before downloading:
+
+```powershell
+python .\skills\weekly-literature-crawl\scripts\weekly_literature_crawl.py `
+  --project-root . dry-run --limit 10
+```
+
+After reviewing the dry run and approving downloads, run the weekly crawl:
+
+```powershell
+python .\skills\weekly-literature-crawl\scripts\weekly_literature_crawl.py `
+  --project-root . crawl --confirm-download
+```
+
+Process pending summaries separately after setting the configured LLM API-key environment variable:
+
+```powershell
+python .\skills\weekly-literature-crawl\scripts\weekly_literature_crawl.py `
+  --project-root . summary
+```
+
+The wrapper also supports `rebuild`, `endnote --since-days 7`, and `endnote --all`. Set `AI_LITERATURE_PROJECT_ROOT` when invoking the installed skill outside the repository.
 
 ## Scheduler
 
