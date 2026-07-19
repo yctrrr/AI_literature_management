@@ -10,9 +10,9 @@ Run the repository's canonical workflow without duplicating crawler code.
 ## Required Workflow
 
 1. Locate the project with `--project-root`, `AI_LITERATURE_PROJECT_ROOT`, or the current directory.
-2. Run `check` before crawl, summary, rebuild, and EndNote operations.
-   For `zotero-plan`, skip `check`; the command validates only the archive path and
-   must not inspect unrelated Zotero settings.
+2. Run `check` before every operation except `zotero-plan`. For `zotero-plan`,
+   skip `check`; the command validates only the archive path and must not inspect
+   unrelated Zotero settings.
 3. Use `dry-run` before a live crawl when filters or configuration changed.
 4. Obtain explicit approval before `crawl`; pass `--confirm-download` only after approval.
 5. Keep `summary` separate unless the user explicitly requests combined crawl and summary.

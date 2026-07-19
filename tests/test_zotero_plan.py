@@ -180,6 +180,30 @@ def test_zotero_plan_normalizes_doi_before_deduplication(tmp_path: Path) -> None
     assert len({record["record_id"] for record in document["records"]}) == 1
 
 
+def test_zotero_plan_normalizes_mixed_case_doi_prefix(tmp_path: Path) -> None:
+    archive = tmp_path / "archive"
+    write_record(
+        archive / "Energy",
+        "first",
+        title="First Copy",
+        doi="DOI: 10.1000/ABC",
+        source_url="https://example.test/first",
+        category="Energy",
+    )
+    write_record(
+        archive / "Climate",
+        "second",
+        title="Second Copy",
+        doi="10.1000/abc",
+        source_url="https://example.test/second",
+        category="Climate",
+    )
+
+    result = export_zotero_plan(archive, since_days=None)
+
+    assert result["records"] == 1
+
+
 def test_zotero_plan_excludes_archive_root_metadata(tmp_path: Path) -> None:
     archive = tmp_path / "archive"
     write_record(
@@ -313,6 +337,50 @@ def test_plan_files_are_not_published_when_staging_fails(
         export_zotero_plan(archive, output, since_days=None)
 
     assert list(output.iterdir()) == []
+
+
+@pytest.mark.parametrize("failure_index", range(4))
+def test_plan_publication_rolls_back_each_failed_replace(
+    tmp_path: Path,
+    monkeypatch,
+    failure_index: int,
+) -> None:
+    archive = tmp_path / "archive"
+    _, metadata_path = write_record(
+        archive / "Energy",
+        "paper",
+        title="Original Paper",
+        doi="10.1000/paper",
+        source_url="https://example.test/paper",
+        category="Energy",
+    )
+    output = tmp_path / "output"
+    export_zotero_plan(archive, output, since_days=None)
+    before = {path.name: path.read_bytes() for path in output.iterdir()}
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    metadata["title"] = "Updated Paper"
+    metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+
+    original_replace = prepare_zotero_import.os.replace
+    publication_count = 0
+    failed = False
+
+    def fail_selected_publish(source, destination):
+        nonlocal publication_count, failed
+        if not failed and str(source).endswith(".staged"):
+            if publication_count == failure_index:
+                failed = True
+                raise OSError("publish failed")
+            publication_count += 1
+        return original_replace(source, destination)
+
+    monkeypatch.setattr(prepare_zotero_import.os, "replace", fail_selected_publish)
+
+    with pytest.raises(OSError, match="publish failed"):
+        export_zotero_plan(archive, output, since_days=None)
+
+    after = {path.name: path.read_bytes() for path in output.iterdir()}
+    assert after == before
 
 
 @pytest.mark.parametrize("prefix", ["=", "+", "-", "@"])

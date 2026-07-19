@@ -248,7 +248,7 @@ def canonical_record_identity(metadata: dict, pdf_path: Path) -> str:
 
 def normalize_doi(value: object) -> str:
     text = str(value or "").strip()
-    text = re.sub(r"^doi:\s*", "", text)
+    text = re.sub(r"^doi:\s*", "", text, flags=re.IGNORECASE)
     parsed = urlsplit(text)
     if parsed.scheme.lower() in {"http", "https"} and (
         parsed.hostname or ""

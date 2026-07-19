@@ -181,22 +181,37 @@ def publish_plan_artifacts(
 ) -> None:
     targets = [json_path, csv_path, latest_json, latest_csv]
     staged = [create_staging_path(target) for target in targets]
+    backups: dict[Path, Path] = {}
+    published: list[Path] = []
     try:
         atomic_write_json(staged[0], document)
         write_csv(staged[1], records, plan_id=plan_id)
         atomic_write_json(staged[2], document)
         write_csv(staged[3], records, plan_id=plan_id)
         for staged_path, target in zip(staged, targets, strict=True):
+            if target.exists():
+                backup = create_staging_path(target, suffix=".backup")
+                os.replace(target, backup)
+                backups[target] = backup
             os.replace(staged_path, target)
+            published.append(target)
+    except Exception:
+        for target in reversed(targets):
+            if target in published:
+                target.unlink(missing_ok=True)
+            backup = backups.get(target)
+            if backup and backup.exists():
+                os.replace(backup, target)
+        raise
     finally:
-        for staged_path in staged:
-            staged_path.unlink(missing_ok=True)
+        for temporary_path in [*staged, *backups.values()]:
+            temporary_path.unlink(missing_ok=True)
 
 
-def create_staging_path(target: Path) -> Path:
+def create_staging_path(target: Path, *, suffix: str = ".staged") -> Path:
     target.parent.mkdir(parents=True, exist_ok=True)
     descriptor, temp_name = tempfile.mkstemp(
-        prefix=f".{target.name}.", suffix=".staged", dir=target.parent
+        prefix=f".{target.name}.", suffix=suffix, dir=target.parent
     )
     os.close(descriptor)
     return Path(temp_name)
