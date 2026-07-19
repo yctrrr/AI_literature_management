@@ -342,6 +342,7 @@ def test_pending_summary_recovers_when_queue_marker_update_fails(
     expected_queue_id = cleanup_metadata["queue_id"]
     cleanup_metadata["queue_id"] = "another-article"
     cleanup_path.write_text(json.dumps(cleanup_metadata), encoding="utf-8")
+    LLM.category = "Energy"
 
     with pytest.raises(ValueError, match="another article"):
         run_summary.summarize_pending_article(
@@ -353,8 +354,12 @@ def test_pending_summary_recovers_when_queue_marker_update_fails(
         )
 
     assert cleanup_path.exists()
+    queued_after_rejection = json.loads(pending_metadata.read_text(encoding="utf-8"))
+    assert Path(queued_after_rejection["pdf_path"]).parent.name == "others"
+    assert len(list((archive_root / "others").glob("*.pdf"))) == 1
     cleanup_metadata["queue_id"] = expected_queue_id
     cleanup_path.write_text(json.dumps(cleanup_metadata), encoding="utf-8")
+    LLM.category = "others"
     run_summary.summarize_pending_article(
         pending_metadata,
         archive,

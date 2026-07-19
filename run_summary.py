@@ -98,6 +98,7 @@ def summarize_pending_article(
     if not metadata.get("queue_id"):
         metadata["queue_id"] = uuid.uuid4().hex
         atomic_write_json(metadata_path, metadata)
+    validated_cleanup_metadata_path(metadata, metadata_path)
     recovered_metadata_path = None
     pdf_path = resolve_pdf_path(metadata, metadata_path)
     if not pdf_path.is_file():
