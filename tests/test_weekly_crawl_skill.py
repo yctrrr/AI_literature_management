@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import shutil
 from pathlib import Path
 
 import pytest
@@ -24,6 +25,10 @@ def make_project(tmp_path: Path) -> tuple[Path, Path]:
     project.mkdir()
     for name in ("run_weekly.py", "run_summary.py", "prepare_endnote_import.py"):
         (project / name).write_text("", encoding="utf-8")
+    source = project / "src"
+    source.mkdir()
+    (source / "__init__.py").write_text("", encoding="utf-8")
+    shutil.copy2(ROOT / "src/config.py", source / "config.py")
     library = project / "library"
     categories = project / "categories"
     archive = project / "archive"
@@ -157,18 +162,34 @@ def test_endnote_full_export_command(tmp_path: Path) -> None:
     assert command[-3:] == ["--all", "--group", "Weekly"]
 
 
+def test_crawl_disables_default_summary_unless_explicit(tmp_path: Path) -> None:
+    wrapper = load_wrapper()
+    project, config = make_project(tmp_path)
+    parser = wrapper.build_parser()
+    normal = parser.parse_args(["crawl", "--confirm-download"])
+    summarized = parser.parse_args(["crawl", "--confirm-download", "--summarize"])
+
+    normal_command = wrapper.build_command(normal, project, config)
+    summarized_command = wrapper.build_command(summarized, project, config)
+
+    assert "--no-summarize" in normal_command
+    assert "--summarize" not in normal_command
+    assert "--summarize" in summarized_command
+    assert "--no-summarize" not in summarized_command
+
+
 def test_config_validation_rejects_missing_paths(tmp_path: Path) -> None:
     wrapper = load_wrapper()
-    config = tmp_path / "config.yaml"
+    project, config = make_project(tmp_path)
     config.write_text("keywords:\n  - energy\npaths: {}\n", encoding="utf-8")
 
-    with pytest.raises(RuntimeError, match="missing paths"):
-        wrapper.validate_config(config)
+    with pytest.raises(ValueError, match="missing path settings"):
+        wrapper.validate_config(config, project)
 
 
 def test_config_validation_rejects_missing_directories(tmp_path: Path) -> None:
     wrapper = load_wrapper()
-    config = tmp_path / "config.yaml"
+    project, config = make_project(tmp_path)
     config.write_text(
         yaml.safe_dump(
             {
@@ -184,4 +205,15 @@ def test_config_validation_rejects_missing_directories(tmp_path: Path) -> None:
     )
 
     with pytest.raises(RuntimeError, match="directories do not exist"):
-        wrapper.validate_config(config)
+        wrapper.validate_config(config, project)
+
+
+def test_config_validation_uses_canonical_api_key_name_check(tmp_path: Path) -> None:
+    wrapper = load_wrapper()
+    project, config = make_project(tmp_path)
+    raw = yaml.safe_load(config.read_text(encoding="utf-8"))
+    raw["llm"]["api_key_env"] = "invalid-name"
+    config.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="Invalid LLM API key"):
+        wrapper.validate_config(config, project)

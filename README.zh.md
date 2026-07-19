@@ -190,6 +190,8 @@ python .\skills\weekly-literature-crawl\scripts\weekly_literature_crawl.py `
 
 ## 定时任务
 
+只有在获得单独、明确的授权后，才能注册、替换或删除定时任务。
+
 注册每周一 09:00 的抓取和 EndNote 任务：
 
 ```powershell

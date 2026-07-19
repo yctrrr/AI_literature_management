@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import os
 import subprocess
@@ -43,34 +44,36 @@ def resolve_config(project_root: Path, explicit: Path | None = None) -> Path:
     return path
 
 
-def validate_config(path: Path) -> dict:
-    raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    missing_paths = [
-        key
-        for key in ("library_root", "category_source", "archive_root")
-        if not (raw.get("paths") or {}).get(key)
-    ]
-    if missing_paths:
-        raise RuntimeError("Configuration is missing paths: " + ", ".join(missing_paths))
-    if not [value for value in (raw.get("keywords") or []) if str(value).strip()]:
-        raise RuntimeError("Configuration must define at least one keyword")
+def validate_config(path: Path, project_root: Path):
+    config_module_path = project_root / "src" / "config.py"
+    if not config_module_path.is_file():
+        raise RuntimeError(f"Canonical project config loader not found: {config_module_path}")
+    module_name = f"_ai_literature_config_{abs(hash(config_module_path))}"
+    spec = importlib.util.spec_from_file_location(module_name, config_module_path)
+    if not spec or not spec.loader:
+        raise RuntimeError(f"Could not load project config module: {config_module_path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    try:
+        spec.loader.exec_module(module)
+        config = module.load_config(path)
+    finally:
+        sys.modules.pop(module_name, None)
+
     missing_directories = []
-    for key, environment in PATH_ENVIRONMENTS.items():
-        value = os.environ.get(environment) or str(raw["paths"][key])
-        directory = Path(value).expanduser()
-        if not directory.is_absolute():
-            directory = path.parent / directory
-        if not directory.resolve().is_dir():
-            missing_directories.append(f"{key}={directory.resolve()}")
+    for key in PATH_ENVIRONMENTS:
+        directory = getattr(config.paths, key)
+        if not directory.is_dir():
+            missing_directories.append(f"{key}={directory}")
     if missing_directories:
         raise RuntimeError(
             "Configured directories do not exist: " + ", ".join(missing_directories)
         )
-    return raw
+    return config
 
 
-def require_llm_key(config: dict) -> None:
-    variable = str((config.get("llm") or {}).get("api_key_env") or "").strip()
+def require_llm_key(config) -> None:
+    variable = str(config.llm.api_key_env or "").strip()
     if not variable:
         raise RuntimeError("Configuration does not define llm.api_key_env")
     if not os.environ.get(variable):
@@ -144,6 +147,8 @@ def build_command(
             append_crawl_options(command, args)
             if args.summarize:
                 command.append("--summarize")
+            else:
+                command.append("--no-summarize")
             if args.skip_endnote_export:
                 command.append("--skip-endnote-export")
         else:
@@ -180,7 +185,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         project_root = resolve_project_root(args.project_root)
         config_path = resolve_config(project_root, args.config)
-        config = validate_config(config_path)
+        config = validate_config(config_path, project_root)
         if args.operation == "check":
             print(
                 json.dumps(

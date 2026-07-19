@@ -190,6 +190,8 @@ The wrapper also supports `rebuild`, `endnote --since-days 7`, and `endnote --al
 
 ## Scheduler
 
+Register, replace, or remove scheduled tasks only after separate explicit authorization.
+
 Register the Monday 09:00 crawl and EndNote task:
 
 ```powershell
