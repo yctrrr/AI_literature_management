@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 from pathlib import Path
@@ -11,7 +12,7 @@ from src.llm import LLMClient
 from src.models import Candidate, FetchResult
 from src.pdf_utils import extract_pdf_text
 from src.summary_manager import SummaryManager
-from src.utils import JsonlLogger, now_iso
+from src.utils import JsonlLogger, atomic_write_json, now_iso
 
 
 def parse_args() -> argparse.Namespace:
@@ -75,7 +76,7 @@ def main() -> int:
             "failed": failed,
         }
     )
-    return 1 if failed and not completed else 0
+    return 1 if failed else 0
 
 
 def pending_metadata_paths(archive_root: Path) -> list[Path]:
@@ -92,8 +93,6 @@ def summarize_pending_article(
     llm: LLMClient,
     summary_manager: SummaryManager,
 ) -> None:
-    import json
-
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
     pdf_path = resolve_pdf_path(metadata, metadata_path)
     if not pdf_path.is_file():
@@ -116,9 +115,13 @@ def summarize_pending_article(
         attachment_path=resolve_attachment_path(metadata),
         metadata=metadata,
     )
+    summary_manager.ensure_index()
     archive.finalize_article(candidate, fetched, classification)
-    metadata_path.unlink(missing_ok=True)
+    metadata["pdf_path"] = str(fetched.pdf_path) if fetched.pdf_path else ""
+    metadata["attachment_path"] = str(fetched.attachment_path) if fetched.attachment_path else ""
+    atomic_write_json(metadata_path, metadata)
     summary_manager.upsert_article(fetched, classification, summary_text)
+    metadata_path.unlink(missing_ok=True)
 
 
 def resolve_pdf_path(metadata: dict, metadata_path: Path) -> Path:

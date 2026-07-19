@@ -79,8 +79,6 @@ def initialize_project(output: Path, values: dict, template_path: Path) -> Path:
         raise ValueError(f"Category source directory does not exist: {category_source}")
     if paths_overlap(category_source, archive_root):
         raise ValueError("Category source and archive root must not contain each other")
-    archive_root.mkdir(parents=True, exist_ok=True)
-    ensure_writable_directory(archive_root)
 
     api_key_env = str(values["llm_api_key_env"]).strip()
     if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", api_key_env):
@@ -116,19 +114,28 @@ def initialize_project(output: Path, values: dict, template_path: Path) -> Path:
         "api_key_env": api_key_env,
     }
 
-    output.parent.mkdir(parents=True, exist_ok=True)
     serialized = yaml.safe_dump(config, sort_keys=False, allow_unicode=True)
-    descriptor, temp_name = tempfile.mkstemp(
-        prefix=f".{output.name}.", suffix=".tmp", dir=output.parent, text=True
-    )
+    created_directories: list[Path] = []
     try:
+        created_directories.extend(create_directory_tree(output.parent))
+        created_directories.extend(create_directory_tree(archive_root))
+        ensure_writable_directory(archive_root)
+        descriptor, temp_name = tempfile.mkstemp(
+            prefix=f".{output.name}.", suffix=".tmp", dir=output.parent, text=True
+        )
         with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
             handle.write(serialized)
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(temp_name, output)
     except Exception:
-        Path(temp_name).unlink(missing_ok=True)
+        if "temp_name" in locals():
+            Path(temp_name).unlink(missing_ok=True)
+        for directory in reversed(created_directories):
+            try:
+                directory.rmdir()
+            except OSError:
+                pass
         raise
     return output
 
@@ -148,6 +155,16 @@ def ensure_writable_directory(path: Path) -> None:
     descriptor, temp_name = tempfile.mkstemp(prefix=".write-test-", dir=path)
     os.close(descriptor)
     Path(temp_name).unlink()
+
+
+def create_directory_tree(path: Path) -> list[Path]:
+    missing: list[Path] = []
+    current = path
+    while not current.exists():
+        missing.append(current)
+        current = current.parent
+    path.mkdir(parents=True, exist_ok=True)
+    return list(reversed(missing))
 
 
 def build_parser() -> argparse.ArgumentParser:

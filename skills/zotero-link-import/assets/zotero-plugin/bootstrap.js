@@ -128,8 +128,21 @@ async function findExisting(items, doi, path, title) {
   return { parentByDOI, parentByTitle, attachmentByPath };
 }
 
-async function addToCollection(item, collection, actions) {
+function rememberExistingItem(item, createdIDs, modifiedItems) {
+  if (createdIDs.includes(item.id)
+      || modifiedItems.some(snapshot => snapshot.id === item.id)) {
+    return;
+  }
+  modifiedItems.push({
+    id: item.id,
+    collections: [...item.getCollections()],
+    parentItemID: item.parentItemID || false
+  });
+}
+
+async function addToCollection(item, collection, actions, createdIDs, modifiedItems) {
   if (!item.inCollection(collection.id)) {
+    rememberExistingItem(item, createdIDs, modifiedItems);
     item.addToCollection(collection.id);
     await item.saveTx({ skipDateModifiedUpdate: true });
     actions.push("added_item_to_collection");
@@ -212,7 +225,8 @@ async function linkAttachment(file, parent, collection, createdIDs) {
   }
 }
 
-async function attachStandaloneToParent(attachment, parent, createdIDs) {
+async function attachStandaloneToParent(attachment, parent, createdIDs, modifiedItems) {
+  rememberExistingItem(attachment, createdIDs, modifiedItems);
   attachment.parentItemID = parent.id;
   attachment.setCollections([]);
   await attachment.saveTx();
@@ -242,7 +256,19 @@ async function recognizeAttachment(attachment, createdIDs) {
   return attachment.parentItemID ? await Zotero.Items.getAsync(attachment.parentItemID) : null;
 }
 
-async function rollback(createdIDs) {
+async function rollback(createdIDs, modifiedItems) {
+  for (let snapshot of [...modifiedItems].reverse()) {
+    try {
+      let item = await Zotero.Items.getAsync(snapshot.id);
+      if (!item) continue;
+      item.parentItemID = snapshot.parentItemID;
+      item.setCollections(snapshot.collections);
+      await item.saveTx({ skipDateModifiedUpdate: true });
+    }
+    catch (error) {
+      Zotero.logError(error);
+    }
+  }
   for (let id of [...createdIDs].reverse()) {
     try {
       let item = Zotero.Items.get(id);
@@ -269,6 +295,7 @@ function buildResult(status, parent, attachment, collection, doi, file, metadata
 
 async function importPDF(data) {
   let createdIDs = [];
+  let modifiedItems = [];
   let actions = [];
   try {
     let file = validateFile(data.path);
@@ -295,7 +322,7 @@ async function importPDF(data) {
         );
       }
       parent = attachmentParent;
-      await addToCollection(parent, collection, actions);
+      await addToCollection(parent, collection, actions, createdIDs, modifiedItems);
       actions.push("reused_linked_attachment");
       return buildResult("reused", parent, attachment, collection, doi, file, "existing", actions);
     }
@@ -305,18 +332,18 @@ async function importPDF(data) {
       actions.push("created_parent_from_doi");
     }
     else if (parent) {
-      await addToCollection(parent, collection, actions);
+      await addToCollection(parent, collection, actions, createdIDs, modifiedItems);
       actions.push("reused_parent");
     }
 
     if (attachment && !attachment.parentItemID && parent) {
-      await attachStandaloneToParent(attachment, parent, createdIDs);
+      await attachStandaloneToParent(attachment, parent, createdIDs, modifiedItems);
       actions.push("reused_and_attached_standalone_pdf");
       return buildResult("reused", parent, attachment, collection, doi, file, "existing", actions);
     }
 
     if (attachment && !attachment.parentItemID && !parent) {
-      await addToCollection(attachment, collection, actions);
+      await addToCollection(attachment, collection, actions, createdIDs, modifiedItems);
       actions.push("reused_standalone_linked_attachment");
       return buildResult(
         "reused",
@@ -341,7 +368,7 @@ async function importPDF(data) {
 
     parent = await recognizeAttachment(attachment, createdIDs);
     if (parent) {
-      await addToCollection(parent, collection, actions);
+      await addToCollection(parent, collection, actions, createdIDs, modifiedItems);
       actions.push("recognized_pdf_metadata");
       return buildResult("created", parent, attachment, collection, doi, file, "recognized", actions);
     }
@@ -359,7 +386,7 @@ async function importPDF(data) {
     );
   }
   catch (error) {
-    await rollback(createdIDs);
+    await rollback(createdIDs, modifiedItems);
     throw error;
   }
 }

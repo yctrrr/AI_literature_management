@@ -81,6 +81,25 @@ def test_initializer_rejects_overlapping_category_and_archive(tmp_path: Path) ->
         )
 
 
+def test_initializer_validates_before_creating_archive(tmp_path: Path) -> None:
+    library = tmp_path / "library"
+    categories = tmp_path / "categories"
+    archive = tmp_path / "archive"
+    library.mkdir()
+    categories.mkdir()
+    values = initialization_values(library, categories, archive)
+    values["llm_api_key_env"] = "invalid-name"
+
+    with pytest.raises(ValueError, match="Invalid API key"):
+        initialize_project(
+            tmp_path / "config.yaml",
+            values,
+            Path(__file__).parents[1] / "config.example.yaml",
+        )
+
+    assert not archive.exists()
+
+
 def test_missing_config_points_to_initializer(tmp_path: Path) -> None:
     with pytest.raises(FileNotFoundError, match="init_project.py"):
         load_config(tmp_path / "missing.yaml")

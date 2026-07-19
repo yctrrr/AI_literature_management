@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from src.models import Classification, FetchResult
-from src.utils import now_iso
+from src.utils import atomic_write_json, now_iso
 
 
 class SummaryManager:
@@ -216,7 +216,7 @@ class SummaryManager:
         return index
 
     def _write_index(self, index: dict[str, Any]) -> None:
-        self.index_path.write_text(json.dumps(index, ensure_ascii=False, indent=2), encoding="utf-8")
+        atomic_write_json(self.index_path, index)
 
     @staticmethod
     def _metadata_path_for_pdf(pdf_path: Path | None) -> Path | None:

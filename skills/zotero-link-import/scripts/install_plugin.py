@@ -9,7 +9,9 @@ import json
 import os
 import secrets
 import shutil
+import subprocess
 import sys
+import tempfile
 import zipfile
 from pathlib import Path
 
@@ -17,6 +19,65 @@ from pathlib import Path
 SKILL_DIR = Path(__file__).resolve().parent.parent
 PLUGIN_SOURCE = SKILL_DIR / "assets" / "zotero-plugin"
 PLUGIN_ID = "{7f9c5a2e-1d4b-4a8f-9c6e-2b3d5f7a9c10}"
+PRIVATE_MODE = 0o600
+
+
+def make_private(path: Path) -> None:
+    os.chmod(path, PRIVATE_MODE)
+    if os.name == "nt":
+        domain = os.environ.get("USERDOMAIN")
+        username = os.environ.get("USERNAME")
+        principal = f"{domain}\\{username}" if domain and username else username
+        if not principal:
+            raise OSError("Could not identify the current Windows account")
+        result = subprocess.run(
+            [
+                "icacls",
+                str(path),
+                "/inheritance:r",
+                "/grant:r",
+                f"{principal}:(F)",
+            ],
+            capture_output=True,
+            text=True,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            check=False,
+        )
+        if result.returncode != 0:
+            raise OSError(f"Could not restrict permissions for {path}")
+
+
+def atomic_private_write(path: Path, data: bytes) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temp_name = tempfile.mkstemp(
+        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
+    )
+    try:
+        os.chmod(temp_name, PRIVATE_MODE)
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp_name, path)
+        make_private(path)
+    except Exception:
+        try:
+            os.close(descriptor)
+        except OSError:
+            pass
+        Path(temp_name).unlink(missing_ok=True)
+        raise
+
+
+def file_snapshot(path: Path) -> bytes | None:
+    return path.read_bytes() if path.is_file() else None
+
+
+def restore_private_file(path: Path, snapshot: bytes | None) -> None:
+    if snapshot is None:
+        path.unlink(missing_ok=True)
+    else:
+        atomic_private_write(path, snapshot)
 
 
 def default_config_path() -> Path:
@@ -122,13 +183,27 @@ def build_xpi(token: str, allowed_root: Path, output: Path) -> Path:
     bootstrap = bootstrap.replace("__INSTALL_TOKEN__", token)
     bootstrap = bootstrap.replace("__ALLOWED_ROOT__", json.dumps(str(allowed_root)))
     output.parent.mkdir(parents=True, exist_ok=True)
-    with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-        for name, content in (("manifest.json", manifest), ("bootstrap.js", bootstrap)):
-            info = zipfile.ZipInfo(name, date_time=(2026, 1, 1, 0, 0, 0))
-            info.create_system = 3
-            info.external_attr = 0o100644 << 16
-            info.compress_type = zipfile.ZIP_DEFLATED
-            archive.writestr(info, content.encode("utf-8"))
+    descriptor, temp_name = tempfile.mkstemp(
+        prefix=f".{output.name}.", suffix=".tmp", dir=output.parent
+    )
+    os.close(descriptor)
+    try:
+        make_private(Path(temp_name))
+        with zipfile.ZipFile(temp_name, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            for name, content in (("manifest.json", manifest), ("bootstrap.js", bootstrap)):
+                info = zipfile.ZipInfo(name, date_time=(2026, 1, 1, 0, 0, 0))
+                info.create_system = 3
+                info.external_attr = 0o100644 << 16
+                info.compress_type = zipfile.ZIP_DEFLATED
+                archive.writestr(info, content.encode("utf-8"))
+        with Path(temp_name).open("rb+") as handle:
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp_name, output)
+        make_private(output)
+    except Exception:
+        Path(temp_name).unlink(missing_ok=True)
+        raise
     return output
 
 
@@ -139,7 +214,6 @@ def write_config(
     allowed_root: Path,
     zotero_exe: Path | None,
 ) -> None:
-    config_path.parent.mkdir(parents=True, exist_ok=True)
     config = {
         "base_url": "http://127.0.0.1:23119",
         "token": token,
@@ -148,9 +222,9 @@ def write_config(
         "plugin_id": PLUGIN_ID,
         "zotero_exe": str(zotero_exe) if zotero_exe else "",
     }
-    config_path.write_text(
-        json.dumps(config, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
+    atomic_private_write(
+        config_path,
+        (json.dumps(config, ensure_ascii=False, indent=2) + "\n").encode("utf-8"),
     )
 
 
@@ -185,7 +259,7 @@ def install_distribution_policy(zotero_exe: Path, xpi: Path, version: str) -> li
         package_directory = base / "distribution" / "packages"
         package_directory.mkdir(parents=True, exist_ok=True)
         package = package_directory / f"zotero-link-import-{version}.xpi"
-        shutil.copy2(xpi, package)
+        atomic_private_write(package, xpi.read_bytes())
         paths.extend([str(package), str(write_install_policy(base, package.as_uri()))])
     return paths
 
@@ -232,20 +306,58 @@ def install(args: argparse.Namespace) -> int:
     profiles_ini = discover_profiles_ini(args.profiles_ini)
     profile = active_profile(profiles_ini)
     zotero_exe = discover_zotero_exe(args.zotero_exe)
+    if args.install_policy and zotero_exe is None:
+        raise RuntimeError("--install-policy requires a detectable Zotero executable")
     token = existing_token(config_path) or secrets.token_urlsafe(32)
-    xpi = build_xpi(token, allowed_root, config_path.with_suffix(".xpi"))
+    xpi_path = config_path.with_suffix(".xpi")
+    xpi_snapshot = file_snapshot(xpi_path)
+    xpi = build_xpi(token, allowed_root, xpi_path)
     destination = profile / "extensions" / f"{PLUGIN_ID}.xpi"
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(xpi, destination)
-    policy_paths = []
+    config_snapshot = file_snapshot(config_path)
+    destination_snapshot = file_snapshot(destination)
+    policy_snapshots: dict[Path, bytes | None] = {}
+    version = ""
     if args.install_policy:
-        if zotero_exe is None:
-            raise RuntimeError("--install-policy requires a detectable Zotero executable")
         version = json.loads(
             (PLUGIN_SOURCE / "manifest.json").read_text(encoding="utf-8")
         )["version"]
-        policy_paths = install_distribution_policy(zotero_exe, xpi, version)
-    write_config(config_path, token, profile, allowed_root, zotero_exe)
+        for base in distribution_bases(zotero_exe):
+            package = base / "distribution" / "packages" / f"zotero-link-import-{version}.xpi"
+            policy_path = base / "distribution" / "policies.json"
+            policy_snapshots[package] = file_snapshot(package)
+            policy_snapshots[policy_path] = file_snapshot(policy_path)
+    policy_paths = []
+    try:
+        write_config(config_path, token, profile, allowed_root, zotero_exe)
+        atomic_private_write(destination, xpi.read_bytes())
+        if args.install_policy:
+            policy_paths = install_distribution_policy(zotero_exe, xpi, version)
+    except Exception as install_error:
+        rollback_actions = []
+        for path, snapshot in reversed(policy_snapshots.items()):
+            if snapshot is None:
+                rollback_actions.append(lambda path=path: path.unlink(missing_ok=True))
+            elif path.suffix.lower() == ".xpi":
+                rollback_actions.append(
+                    lambda path=path, snapshot=snapshot: atomic_private_write(path, snapshot)
+                )
+            else:
+                rollback_actions.append(
+                    lambda path=path, snapshot=snapshot: path.write_bytes(snapshot)
+                )
+        rollback_actions.extend(
+            [
+                lambda: restore_private_file(destination, destination_snapshot),
+                lambda: restore_private_file(config_path, config_snapshot),
+                lambda: restore_private_file(xpi_path, xpi_snapshot),
+            ]
+        )
+        for action in rollback_actions:
+            try:
+                action()
+            except Exception as rollback_error:
+                install_error.add_note(f"Rollback failed: {rollback_error}")
+        raise
     print(
         json.dumps(
             {

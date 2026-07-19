@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import argparse
 import importlib.util
 import json
+import os
 import zipfile
 from pathlib import Path
 
+import pytest
 import yaml
 
 
@@ -70,6 +73,66 @@ def test_zotero_plugin_build_injects_local_values(tmp_path: Path) -> None:
     assert "__ALLOWED_ROOT__" not in bootstrap
     assert "test-token-value" in bootstrap
     assert json.dumps(str(allowed_root)) in bootstrap
+    assert not list(tmp_path.glob(".plugin.xpi.*.tmp"))
+    if os.name != "nt":
+        assert output.stat().st_mode & 0o777 == 0o600
+
+
+def test_zotero_plugin_tracks_existing_item_rollback() -> None:
+    bootstrap = (
+        ROOT
+        / "skills/zotero-link-import/assets/zotero-plugin/bootstrap.js"
+    ).read_text(encoding="utf-8")
+    assert "rememberExistingItem" in bootstrap
+    assert "collections: [...item.getCollections()]" in bootstrap
+    assert "await rollback(createdIDs, modifiedItems)" in bootstrap
+
+
+def test_zotero_installer_restores_config_and_profile_on_failure(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    installer = load_module(
+        "zotero_install_plugin_rollback",
+        "skills/zotero-link-import/scripts/install_plugin.py",
+    )
+    allowed_root = tmp_path / "library"
+    profile = tmp_path / "profile"
+    extensions = profile / "extensions"
+    allowed_root.mkdir()
+    extensions.mkdir(parents=True)
+    profiles_ini = tmp_path / "profiles.ini"
+    profiles_ini.write_text(
+        "[Profile0]\nName=default\nIsRelative=0\nPath=" + str(profile) + "\nDefault=1\n",
+        encoding="utf-8",
+    )
+    config_path = tmp_path / "client.json"
+    config_path.write_bytes(b"old-config")
+    destination = extensions / f"{installer.PLUGIN_ID}.xpi"
+    destination.write_bytes(b"old-xpi")
+    original_write = installer.atomic_private_write
+
+    def fail_profile_write(path: Path, data: bytes) -> None:
+        if path == destination:
+            raise OSError("profile write failed")
+        original_write(path, data)
+
+    monkeypatch.setattr(installer, "atomic_private_write", fail_profile_write)
+    monkeypatch.setattr(installer, "discover_zotero_exe", lambda _value: None)
+    args = argparse.Namespace(
+        allowed_root=str(allowed_root),
+        config=config_path,
+        profiles_ini=profiles_ini,
+        zotero_exe=None,
+        install_policy=False,
+    )
+
+    with pytest.raises(OSError, match="profile write failed"):
+        installer.install(args)
+
+    assert config_path.read_bytes() == b"old-config"
+    assert destination.read_bytes() == b"old-xpi"
+    assert not config_path.with_suffix(".xpi").exists()
 
 
 def test_skill_packages_are_self_contained() -> None:

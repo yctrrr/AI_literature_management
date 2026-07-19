@@ -1,14 +1,19 @@
 from __future__ import annotations
 
 import json
+from argparse import Namespace
 from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
 
 from prepare_endnote_import import DEFAULT_GROUP, export_endnote_import
 from src.archive_manager import PENDING_SUMMARY_DIR, ArchiveManager
 from src.article_fetcher import ArticleFetcher
 from src.models import Candidate, Classification, FetchResult
 from src.summary_manager import SummaryManager
+import run_summary
 
 
 def test_pending_queue_and_summary_rebuild(tmp_path: Path) -> None:
@@ -94,3 +99,102 @@ def test_attachment_parser_ignores_figure_pages() -> None:
         "https://www.nature.com/articles/example",
     )
     assert selected == "https://static-content.springer.com/esm/art1.zip"
+
+
+def test_pending_summary_remains_retryable_after_index_failure(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    categories = tmp_path / "categories"
+    archive_root = tmp_path / "archive"
+    (categories / "Energy").mkdir(parents=True)
+    (categories / "others").mkdir()
+    archive = ArchiveManager(categories, archive_root)
+    archive.ensure_layout()
+    pending_pdf = archive.pending_summary_dir / "paper.pdf"
+    pending_pdf.write_bytes(b"%PDF-test")
+    pending_metadata = archive.pending_summary_dir / "paper.metadata.json"
+    pending_metadata.write_text(
+        json.dumps(
+            {
+                "title": "Retry Paper",
+                "source_url": "https://example.test/retry",
+                "pdf_path": str(pending_pdf),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class LLM:
+        max_pdf_chars = 100
+
+        @staticmethod
+        def classify(*_args):
+            return Classification("Energy", 1.0, "match", "classified")
+
+        @staticmethod
+        def summarize(*_args):
+            return "Summary"
+
+    manager = SummaryManager(archive_root, archive.categories())
+    manager.ensure_index()
+    original_upsert = manager.upsert_article
+    monkeypatch.setattr(run_summary, "extract_pdf_text", lambda *_args, **_kwargs: "text")
+    monkeypatch.setattr(manager, "upsert_article", lambda *_args: (_ for _ in ()).throw(OSError("disk")))
+
+    with pytest.raises(OSError, match="disk"):
+        run_summary.summarize_pending_article(
+            pending_metadata,
+            archive,
+            archive.categories(),
+            LLM(),
+            manager,
+        )
+
+    assert pending_metadata.exists()
+    queued = json.loads(pending_metadata.read_text(encoding="utf-8"))
+    assert Path(queued["pdf_path"]).parent.name == "Energy"
+
+    monkeypatch.setattr(manager, "upsert_article", original_upsert)
+    run_summary.summarize_pending_article(
+        pending_metadata,
+        archive,
+        archive.categories(),
+        LLM(),
+        manager,
+    )
+
+    assert not pending_metadata.exists()
+    assert len(list((archive_root / "Energy").glob("*.pdf"))) == 1
+    assert len(list((archive_root / "Energy").glob("*.metadata.json"))) == 1
+
+
+def test_summary_batch_returns_failure_when_any_article_fails(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    categories = tmp_path / "categories"
+    archive_root = tmp_path / "archive"
+    (categories / "Energy").mkdir(parents=True)
+    monkeypatch.setenv("TEST_LLM_KEY", "test")
+    config = SimpleNamespace(
+        paths=SimpleNamespace(category_source=categories, archive_root=archive_root),
+        llm=SimpleNamespace(api_key_env="TEST_LLM_KEY"),
+    )
+    pending = [tmp_path / "ok.metadata.json", tmp_path / "bad.metadata.json"]
+    monkeypatch.setattr(
+        run_summary,
+        "parse_args",
+        lambda: Namespace(config=None, limit=None, rebuild_summary=False),
+    )
+    monkeypatch.setattr(run_summary, "load_config", lambda _path: config)
+    monkeypatch.setattr(run_summary, "LLMClient", lambda _config: object())
+    monkeypatch.setattr(run_summary, "pending_metadata_paths", lambda _root: pending)
+
+    def summarize(metadata_path, *_args):
+        if metadata_path.name.startswith("bad"):
+            raise OSError("failed article")
+
+    monkeypatch.setattr(run_summary, "summarize_pending_article", summarize)
+
+    assert run_summary.main() == 1
