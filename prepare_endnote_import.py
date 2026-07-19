@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import re
+from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
@@ -89,6 +90,7 @@ def load_records(
     since_days: int | None = None,
     *,
     include_pending: bool = True,
+    metadata_path_filter: Callable[[Path], bool] | None = None,
 ) -> list[dict]:
     records: list[dict] = []
     seen: dict[str, dict] = {}
@@ -99,6 +101,8 @@ def load_records(
             archive_root,
             included_internal_dirs=(ENDNOTE_INCLUDED_INTERNAL_DIRS if include_pending else set()),
         ):
+            continue
+        if metadata_path_filter and not metadata_path_filter(metadata_path):
             continue
         metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
         source_timestamp = record_timestamp(metadata, metadata_path)
@@ -243,10 +247,14 @@ def canonical_record_identity(metadata: dict, pdf_path: Path) -> str:
 
 
 def normalize_doi(value: object) -> str:
-    text = str(value or "").strip().lower()
+    text = str(value or "").strip()
     text = re.sub(r"^doi:\s*", "", text)
-    text = re.sub(r"^https?://(?:dx\.)?doi\.org/", "", text)
-    return text.strip()
+    parsed = urlsplit(text)
+    if parsed.scheme.lower() in {"http", "https"} and (
+        parsed.hostname or ""
+    ).lower() in {"doi.org", "dx.doi.org"}:
+        text = parsed.path.lstrip("/")
+    return text.strip().lower()
 
 
 def normalize_source_url(value: object) -> str:
@@ -256,15 +264,23 @@ def normalize_source_url(value: object) -> str:
     parsed = urlsplit(text)
     if not parsed.scheme or not parsed.netloc:
         return text
-    return urlunsplit(
-        (
-            parsed.scheme.lower(),
-            parsed.netloc.lower(),
-            parsed.path,
-            parsed.query,
-            "",
-        )
-    )
+    scheme = parsed.scheme.lower()
+    hostname = (parsed.hostname or "").lower()
+    try:
+        port = parsed.port
+    except ValueError:
+        return text
+    if (scheme, port) in {("http", 80), ("https", 443)}:
+        port = None
+    host = f"[{hostname}]" if ":" in hostname else hostname
+    netloc = host if port is None else f"{host}:{port}"
+    if parsed.username is not None:
+        userinfo = parsed.username
+        if parsed.password is not None:
+            userinfo += f":{parsed.password}"
+        netloc = f"{userinfo}@{netloc}"
+    path = parsed.path or "/"
+    return urlunsplit((scheme, netloc, path, parsed.query, ""))
 
 
 def write_ris(path: Path, records: list[dict], group: str) -> None:

@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 import yaml
 
+import prepare_zotero_import
 from prepare_zotero_import import (
     export_zotero_plan,
     resolve_archive_root,
@@ -103,6 +104,7 @@ def test_zotero_plan_writes_csv_and_stable_ids(tmp_path: Path) -> None:
         rows = list(csv.DictReader(handle))
     assert rows[0]["proposed_collection"] == "Climate"
     assert rows[0]["zotero_duplicate_check"] == "not_run"
+    assert rows[0]["plan_id"] == second_document["plan_id"]
 
 
 def test_zotero_plan_skips_missing_pdf(tmp_path: Path) -> None:
@@ -194,6 +196,125 @@ def test_zotero_plan_excludes_archive_root_metadata(tmp_path: Path) -> None:
     assert result["records"] == 0
 
 
+def test_root_duplicate_cannot_shadow_finalized_record(tmp_path: Path) -> None:
+    archive = tmp_path / "archive"
+    write_record(
+        archive,
+        "000-root-copy",
+        title="Unfinalized Copy",
+        doi="10.1000/shadow",
+        source_url="https://example.test/shadow",
+        category="not-finalized",
+    )
+    write_record(
+        archive / "Energy",
+        "final-copy",
+        title="Finalized Copy",
+        doi="10.1000/shadow",
+        source_url="https://example.test/shadow",
+        category="Energy",
+    )
+
+    result = export_zotero_plan(archive, since_days=None)
+    document = json.loads(Path(result["latest_json"]).read_text(encoding="utf-8"))
+
+    assert result["records"] == 1
+    assert document["records"][0]["title"] == "Finalized Copy"
+    assert document["records"][0]["proposed_collection"] == "Energy"
+
+
+def test_malformed_root_metadata_is_ignored_before_parsing(tmp_path: Path) -> None:
+    archive = tmp_path / "archive"
+    archive.mkdir()
+    (archive / "000-broken.metadata.json").write_text("{broken", encoding="utf-8")
+    write_record(
+        archive / "Energy",
+        "valid",
+        title="Valid Paper",
+        doi="10.1000/valid",
+        source_url="https://example.test/valid",
+        category="Energy",
+    )
+
+    result = export_zotero_plan(archive, since_days=None)
+
+    assert result["records"] == 1
+
+
+def test_doi_url_query_is_ignored_for_identity(tmp_path: Path) -> None:
+    archive = tmp_path / "archive"
+    write_record(
+        archive / "Energy",
+        "first",
+        title="First DOI Copy",
+        doi="https://doi.org/10.1000/ABC?tracking=1#fragment",
+        source_url="https://example.test/first",
+        category="Energy",
+    )
+    write_record(
+        archive / "Climate",
+        "second",
+        title="Second DOI Copy",
+        doi="10.1000/abc",
+        source_url="https://example.test/second",
+        category="Climate",
+    )
+
+    result = export_zotero_plan(archive, since_days=None)
+
+    assert result["records"] == 1
+
+
+def test_source_url_default_port_is_ignored_for_identity(tmp_path: Path) -> None:
+    archive = tmp_path / "archive"
+    write_record(
+        archive / "Energy",
+        "first",
+        title="First URL Copy",
+        doi="",
+        source_url="https://example.test:443/paper#first",
+        category="Energy",
+    )
+    write_record(
+        archive / "Climate",
+        "second",
+        title="Second URL Copy",
+        doi="",
+        source_url="https://example.test/paper",
+        category="Climate",
+    )
+
+    result = export_zotero_plan(archive, since_days=None)
+
+    assert result["records"] == 1
+
+
+def test_plan_files_are_not_published_when_staging_fails(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    archive = tmp_path / "archive"
+    write_record(
+        archive / "Energy",
+        "paper",
+        title="Paper",
+        doi="10.1000/paper",
+        source_url="https://example.test/paper",
+        category="Energy",
+    )
+    output = tmp_path / "output"
+    monkeypatch.setattr(
+        prepare_zotero_import,
+        "write_csv",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("csv failed")),
+    )
+
+    with pytest.raises(OSError, match="csv failed"):
+        export_zotero_plan(archive, output, since_days=None)
+
+    assert list(output.iterdir()) == []
+
+
 @pytest.mark.parametrize("prefix", ["=", "+", "-", "@"])
 def test_zotero_plan_neutralizes_csv_formula_prefixes(prefix: str) -> None:
     value = prefix + "dangerous"
@@ -216,3 +337,15 @@ def test_archive_only_config_ignores_zotero_settings(tmp_path: Path) -> None:
     )
 
     assert resolve_archive_root(config_path=config) == archive.resolve()
+
+
+@pytest.mark.parametrize("content", ["- item\n", "paths: invalid\n"])
+def test_archive_only_config_rejects_non_mapping_sections(
+    tmp_path: Path,
+    content: str,
+) -> None:
+    config = tmp_path / "config.yaml"
+    config.write_text(content, encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="must be a mapping"):
+        resolve_archive_root(config_path=config)

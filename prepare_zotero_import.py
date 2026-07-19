@@ -74,7 +74,12 @@ def resolve_archive_root(
         if not selected_config.is_file():
             raise RuntimeError(f"Initialized configuration not found: {selected_config}")
         raw = yaml.safe_load(selected_config.read_text(encoding="utf-8")) or {}
-        value = (raw.get("paths") or {}).get("archive_root")
+        if not isinstance(raw, dict):
+            raise RuntimeError("Configuration root must be a mapping")
+        paths = raw.get("paths") or {}
+        if not isinstance(paths, dict):
+            raise RuntimeError("Configuration paths must be a mapping")
+        value = paths.get("archive_root")
         if not value:
             raise RuntimeError("Configuration is missing paths.archive_root")
         archive_root = Path(str(value)).expanduser()
@@ -102,29 +107,39 @@ def export_zotero_plan(
             archive_root,
             since_days=since_days,
             include_pending=False,
+            metadata_path_filter=lambda path: is_finalized_metadata_path(
+                path, archive_root
+            ),
         )
-        if is_finalized_record(record, archive_root)
     ]
     records.sort(key=lambda record: (record["proposed_collection"].lower(), record["title"].lower()))
-    generated_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    generated = datetime.now(timezone.utc)
+    generated_at = generated.isoformat(timespec="microseconds")
+    plan_id = generated.strftime("%Y%m%dT%H%M%S%fZ")
     document = {
         "version": 1,
+        "plan_id": plan_id,
         "generated_at": generated_at,
         "archive_root": str(archive_root),
         "since_days": since_days if since_days is not None else "all",
         "record_count": len(records),
         "records": records,
     }
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    timestamp = generated.astimezone().strftime("%Y%m%d_%H%M%S_%f")
     json_path = output_dir / f"{DEFAULT_PREFIX}_{timestamp}.json"
     csv_path = output_dir / f"{DEFAULT_PREFIX}_{timestamp}.csv"
     latest_json = output_dir / f"{DEFAULT_PREFIX}_latest.json"
     latest_csv = output_dir / f"{DEFAULT_PREFIX}_latest.csv"
 
-    atomic_write_json(json_path, document)
-    atomic_write_json(latest_json, document)
-    write_csv(csv_path, records)
-    write_csv(latest_csv, records)
+    publish_plan_artifacts(
+        document,
+        records,
+        plan_id,
+        json_path=json_path,
+        csv_path=csv_path,
+        latest_json=latest_json,
+        latest_csv=latest_csv,
+    )
 
     print(f"records: {len(records)}")
     print(f"since_days: {since_days if since_days is not None else 'all'}")
@@ -143,8 +158,7 @@ def export_zotero_plan(
     }
 
 
-def is_finalized_record(record: dict, archive_root: Path) -> bool:
-    metadata_path = Path(record.get("_metadata_path") or "")
+def is_finalized_metadata_path(metadata_path: Path, archive_root: Path) -> bool:
     try:
         relative = metadata_path.resolve().relative_to(archive_root)
     except (OSError, ValueError):
@@ -155,6 +169,39 @@ def is_finalized_record(record: dict, archive_root: Path) -> bool:
     )
 
 
+def publish_plan_artifacts(
+    document: dict,
+    records: list[dict],
+    plan_id: str,
+    *,
+    json_path: Path,
+    csv_path: Path,
+    latest_json: Path,
+    latest_csv: Path,
+) -> None:
+    targets = [json_path, csv_path, latest_json, latest_csv]
+    staged = [create_staging_path(target) for target in targets]
+    try:
+        atomic_write_json(staged[0], document)
+        write_csv(staged[1], records, plan_id=plan_id)
+        atomic_write_json(staged[2], document)
+        write_csv(staged[3], records, plan_id=plan_id)
+        for staged_path, target in zip(staged, targets, strict=True):
+            os.replace(staged_path, target)
+    finally:
+        for staged_path in staged:
+            staged_path.unlink(missing_ok=True)
+
+
+def create_staging_path(target: Path) -> Path:
+    target.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temp_name = tempfile.mkstemp(
+        prefix=f".{target.name}.", suffix=".staged", dir=target.parent
+    )
+    os.close(descriptor)
+    return Path(temp_name)
+
+
 def prepare_record(record: dict) -> dict:
     metadata_path = Path(record["_metadata_path"]).resolve()
     category = metadata_path.parent.name
@@ -162,9 +209,9 @@ def prepare_record(record: dict) -> dict:
     record_id = hashlib.sha256(identity.encode("utf-8")).hexdigest()
     raw_authors = record.get("authors") or []
     authors = (
-        [raw_authors]
-        if isinstance(raw_authors, str)
-        else [str(author) for author in raw_authors]
+        [str(author) for author in raw_authors]
+        if isinstance(raw_authors, (list, tuple, set))
+        else [str(raw_authors)]
     )
     return {
         "record_id": record_id,
@@ -187,8 +234,9 @@ def prepare_record(record: dict) -> dict:
     }
 
 
-def write_csv(path: Path, records: list[dict]) -> None:
+def write_csv(path: Path, records: list[dict], *, plan_id: str = "") -> None:
     fields = [
+        "plan_id",
         "record_id",
         "status",
         "zotero_duplicate_check",
@@ -216,6 +264,7 @@ def write_csv(path: Path, records: list[dict]) -> None:
             writer.writeheader()
             for record in records:
                 row = {key: safe_csv_cell(record.get(key, "")) for key in fields}
+                row["plan_id"] = plan_id
                 row["authors"] = safe_csv_cell("; ".join(record.get("authors") or []))
                 row["attachment_paths"] = safe_csv_cell(
                     "; ".join(record.get("attachment_paths") or [])
