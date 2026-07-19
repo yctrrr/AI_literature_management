@@ -316,6 +316,27 @@ def test_pending_summary_recovers_when_queue_marker_update_fails(
     )
     LLM.category = "others"
     monkeypatch.setattr(run_summary, "atomic_write_json", original_marker_write)
+    original_upsert = manager.upsert_article
+    monkeypatch.setattr(
+        manager,
+        "upsert_article",
+        lambda *_args: (_ for _ in ()).throw(OSError("index write failed")),
+    )
+
+    with pytest.raises(OSError, match="index write failed"):
+        run_summary.summarize_pending_article(
+            pending_metadata,
+            archive,
+            archive.categories(),
+            LLM(),
+            manager,
+        )
+
+    queued = json.loads(pending_metadata.read_text(encoding="utf-8"))
+    assert Path(queued["cleanup_metadata_path"]).parent.name == "Energy"
+    assert list((archive_root / "Energy").glob("*.metadata.json"))
+
+    monkeypatch.setattr(manager, "upsert_article", original_upsert)
     run_summary.summarize_pending_article(
         pending_metadata,
         archive,

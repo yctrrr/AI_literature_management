@@ -130,13 +130,22 @@ def summarize_pending_article(
     archive.finalize_article(candidate, fetched, classification)
     metadata["pdf_path"] = str(fetched.pdf_path) if fetched.pdf_path else ""
     metadata["attachment_path"] = str(fetched.attachment_path) if fetched.attachment_path else ""
-    atomic_write_json(metadata_path, metadata)
-    summary_manager.upsert_article(fetched, classification, summary_text)
     if (
         recovered_metadata_path
         and recovered_metadata_path.parent.resolve() != fetched.pdf_path.parent.resolve()
     ):
-        recovered_metadata_path.unlink(missing_ok=True)
+        metadata["cleanup_metadata_path"] = str(recovered_metadata_path)
+    cleanup_metadata_path = validated_cleanup_metadata_path(metadata, metadata_path)
+    if (
+        cleanup_metadata_path
+        and cleanup_metadata_path.parent.resolve() == fetched.pdf_path.parent.resolve()
+    ):
+        metadata.pop("cleanup_metadata_path", None)
+        cleanup_metadata_path = None
+    atomic_write_json(metadata_path, metadata)
+    summary_manager.upsert_article(fetched, classification, summary_text)
+    if cleanup_metadata_path:
+        cleanup_metadata_path.unlink(missing_ok=True)
     metadata_path.unlink(missing_ok=True)
 
 
@@ -196,6 +205,21 @@ def find_finalized_metadata(metadata: dict, pending_path: Path) -> tuple[Path, d
         if len(matches) > 1:
             return None
     return None
+
+
+def validated_cleanup_metadata_path(metadata: dict, pending_path: Path) -> Path | None:
+    value = str(metadata.get("cleanup_metadata_path") or "").strip()
+    if not value:
+        return None
+    cleanup_path = Path(value).resolve()
+    archive_root = pending_path.parent.parent.resolve()
+    if (
+        archive_root not in cleanup_path.parents
+        or not cleanup_path.name.endswith(".metadata.json")
+        or cleanup_path.parent.name.startswith("_")
+    ):
+        raise ValueError("Invalid pending metadata cleanup path")
+    return cleanup_path
 
 
 if __name__ == "__main__":
