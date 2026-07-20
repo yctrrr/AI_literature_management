@@ -10,3 +10,6 @@ data/
 config.yaml
 skills/**/config.json
 skills/**/*.xpi
+
+# Local agent planning and design notes. Never publish these artifacts.
+docs/superpowers/
