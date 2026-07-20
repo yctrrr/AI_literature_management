@@ -10,7 +10,7 @@
 
 <!-- README-I18N:END -->
 
-AI Literature Management is a local-first workflow for turning scattered academic papers into an organized, usable research and personal knowledge base. It connects literature discovery, file organization, local search, AI-assisted understanding, reference-library workflows, and citation-safe manuscript writing without moving a user's library or runtime data to a hosted service.
+AI Literature Management is a local-first workflow for turning scattered academic papers into an organized, usable research and personal knowledge base. It connects literature discovery, file organization, local search, AI-assisted understanding, reference-library workflows.
 
 It is for researchers who need a dependable literature workflow and for AI-tool users building a private, reusable knowledge workflow around their own paper collections.
 
@@ -30,7 +30,7 @@ Review, classify, and summarize
           +--> Export review manifests or EndNote packages
           |
           v
-Link approved PDFs to Zotero and write citation-managed DOCX files
+Link approved PDFs to Zotero and cite liteatures into DOCX files
 ```
 
 Every stage stays local by default. Downloads, Zotero updates, and DOCX edits have explicit confirmation boundaries.
@@ -46,13 +46,13 @@ Every stage stays local by default. Downloads, Zotero updates, and DOCX edits ha
 
 ## Included Skills
 
-| Skill | Outcome |
-| --- | --- |
-| [`weekly-literature-crawl`](./skills/weekly-literature-crawl/SKILL.md) | Validate, preview, and run approved scheduled collection, pending-summary processing, and EndNote exports. |
-| [`literature-ingest`](./skills/literature-ingest/SKILL.md) | Resolve, duplicate-check, classify, and download a paper from DOI, arXiv, publisher, or other supported sources after confirmation. |
-| [`literature-locator`](./skills/literature-locator/SKILL.md) | Find local papers and likely supplementary files without changing the library. |
-| [`zotero-link-import`](./skills/zotero-link-import/SKILL.md) | Link an existing local PDF to a specific Zotero collection only after confirmation. |
-| [`zotero-docx-paper-writing`](./skills/zotero-docx-paper-writing/SKILL.md) | Make evidence-backed, scoped DOCX changes with backups and citation safety checks. |
+| Skill                                                                      | Outcome                                                                                                                             |
+| -------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| [`weekly-literature-crawl`](./skills/weekly-literature-crawl/SKILL.md)     | Validate, preview, and run approved scheduled collection, pending-summary processing, and EndNote exports.                          |
+| [`literature-ingest`](./skills/literature-ingest/SKILL.md)                 | Resolve, duplicate-check, classify, and download a paper from DOI, arXiv, publisher, or other supported sources after confirmation. |
+| [`literature-locator`](./skills/literature-locator/SKILL.md)               | Find local papers and likely supplementary files without changing the library.                                                      |
+| [`zotero-link-import`](./skills/zotero-link-import/SKILL.md)               | Link an existing local PDF to a specific Zotero collection only after confirmation.                                                 |
+| [`zotero-docx-paper-writing`](./skills/zotero-docx-paper-writing/SKILL.md) | Make evidence-backed, scoped DOCX changes with backups and citation safety checks.                                                  |
 
 Install all of them in a supported agent environment:
 
