@@ -9,6 +9,8 @@ __pycache__/
 data/
 config.yaml
 skills/**/config.json
+skills/**/config.local.json
+skills/**/install.local.json
 skills/**/*.xpi
 
 # Local agent planning and design notes. Never publish these artifacts.

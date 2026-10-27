@@ -31,7 +31,7 @@ Do not change any text, object, file, citation, or metadata beyond the user's ex
 ## Zotero And DOCX
 
 - Use Zotero's native Word integration for dynamic citations and the bibliography.
-- Never synthesize, edit, or copy Zotero fields or `ZOTERO_PREF_*` properties.
+- Never synthesize, edit, or copy Zotero fields or `ZOTERO_PREF_*` properties, unless this project explicitly authorizes background/scripted insertion and the procedure in the skill's `references/background-zotero-insertion.md` is followed (including a mandatory post-insertion refresh).
 - Create a verified backup before mutation.
 - Audit the final DOCX against the backup and reject unexplained differences outside Allowed Scope.
 - Stop after the first Zotero integration error and diagnose on a disposable copy.

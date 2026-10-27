@@ -14,7 +14,7 @@ python "<skill-dir>\scripts\locate_literature.py" "paper title or keywords" `
   --root "<literature-root>"
 ```
 
-The script resolves the root from `--root`, `AI_LITERATURE_LIBRARY_ROOT`, or the initialized project config selected by `AI_LITERATURE_CONFIG`.
+The script resolves the root from `--root`, `AI_LITERATURE_LIBRARY_ROOT`, `AI_LITERATURE_CONFIG`, an optional skill-local `config.local.json`, or the current project's `config.yaml`. Keep personal paths in configuration, not in this skill.
 
 ## Workflow
 

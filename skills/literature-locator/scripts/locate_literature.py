@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
 from difflib import SequenceMatcher
@@ -34,16 +35,26 @@ def configured_root(explicit: str | None = None) -> Path:
     if environment_root:
         return Path(environment_root).expanduser().resolve()
     config_value = os.environ.get("AI_LITERATURE_CONFIG")
-    config_path = Path(config_value).expanduser() if config_value else Path.cwd() / "config.yaml"
-    if config_path.is_file():
-        try:
-            import yaml
-        except ImportError as error:
-            raise RuntimeError(
-                "PyYAML is required to read project config; pass --root or set "
-                "AI_LITERATURE_LIBRARY_ROOT"
-            ) from error
-        raw = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+    config_paths = (
+        [Path(config_value).expanduser()] if config_value else [
+            Path(__file__).resolve().parent.parent / "config.local.json",
+            Path.cwd() / "config.yaml",
+        ]
+    )
+    for config_path in config_paths:
+        if not config_path.is_file():
+            continue
+        if config_path.suffix.lower() == ".json":
+            raw = json.loads(config_path.read_text(encoding="utf-8")) or {}
+        else:
+            try:
+                import yaml
+            except ImportError as error:
+                raise RuntimeError(
+                    "PyYAML is required to read project config; pass --root or set "
+                    "AI_LITERATURE_LIBRARY_ROOT"
+                ) from error
+            raw = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
         value = (raw.get("paths") or {}).get("library_root")
         if value:
             root = Path(str(value)).expanduser()

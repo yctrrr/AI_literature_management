@@ -4,9 +4,9 @@
 
 Use Zotero's native Word integration to create, edit, refresh, and remove citations and bibliographies. Ensure every cited library item exists in the active Zotero library before insertion.
 
-Use one Word instance and one target manuscript for each Zotero operation. Close disposable source documents before refreshing the target.
+Use one isolated, automation-owned Word instance and one target manuscript for each automated Zotero operation. The target DOCX must be closed before refresh. Unrelated documents may remain open in pre-existing Word instances; never attach to, save, close, or quit those instances.
 
-`Word.Application.Run('ZoteroRefresh')` returning does not prove that Zotero has finished. The integration continues asynchronously and a second command during that interval can display "A word processor integration command is already running." Serialize automated commands globally and use `scripts/invoke_zotero_refresh_guarded.ps1` for refresh. The guard refuses concurrent commands and existing Word or warning windows, invokes refresh exactly once, waits at least five seconds, requires a stable field fingerprint across multiple samples, and saves only after successful settling.
+`Word.Application.Run('ZoteroRefresh')` returning does not prove that Zotero has finished. The integration continues asynchronously and a second command during that interval can display "A word processor integration command is already running." Serialize automated commands globally and use `scripts/invoke_zotero_refresh_guarded.ps1` for refresh. The guard refuses concurrent commands, an open/locked target, pre-existing Zotero warning windows, and any Word COM instance whose process ID is not newly owned by the guard. It permits unrelated Word instances to remain open, invokes refresh exactly once, waits at least five seconds, requires a stable field fingerprint across multiple samples, and saves only after successful settling.
 
 ## Prohibited Operations
 
@@ -22,15 +22,19 @@ Do not:
 
 These operations can leave valid-looking cached numbers while Zotero's citation processor and bibliography remain stale.
 
+Exception — background (scripted) insertion: the synthesis prohibition is lifted only when the user explicitly requests scripted/background conversion of plain-text references and `background-zotero-insertion.md` is followed end-to-end. That procedure still requires a verified backup, library-item verification, field-balance validation, and a mandatory guarded (or interactive) refresh afterward. Inserted numbers are cached best-effort renders; treat the document as unfinished until Zotero refresh re-renders citations and the bibliography and they agree.
+
 ## Preflight
 
 Before a citation operation:
 
 1. Confirm Zotero is running and the required items exist.
-2. Confirm the target document is the only document receiving Zotero commands.
+2. Confirm the target document is closed and is the only document receiving Zotero commands. Unrelated Word documents may remain open.
 3. Confirm the document has valid Zotero preferences and existing citations are readable.
 4. Create and verify a backup.
 5. Record the initial field count and bibliography presence.
+
+The automated guard must check the target's Word owner file and exclusive file access before launching Word, then compare Word process IDs before and after COM creation. Exactly one new process must appear and its command line must identify it as an automation instance (`/Automation` or `-Embedding`). If ownership cannot be proved, release the COM reference without calling `Quit()` and fail without saving. After opening the target, also fail if Word reports it as read-only.
 
 ## Postflight
 
@@ -52,11 +56,16 @@ normal Word COM session. Some installations route printing or export through
 the loaded `Zotero.dotm` template even when fields are locked, which can hang
 Word or alter field-related package parts.
 
-Use `scripts/render_docx_without_zotero.ps1` after closing all Word windows. It
+Use `scripts/render_docx_without_zotero.ps1` after closing only the target DOCX.
+Unrelated Word documents may remain open and must not be touched. The renderer
 starts a separate worker process for each DOCX so add-in state and COM objects
 cannot leak between files. The script must:
 
-1. Refuse to attach to an existing Word process.
+1. Check the target's Word owner file and exclusive file access. Record existing
+   Word process IDs before COM creation; prove that the COM instance belongs to
+   exactly one new Word automation process (`/Automation` or `-Embedding`) before
+   changing add-in state or opening the target. If ownership cannot be proved,
+   release the COM reference without calling `Quit()`.
 2. Record the source DOCX SHA-256 hashes.
 3. Temporarily set the Zotero Word add-in to not installed and verify the
    add-in reports `Installed = false`. Do not enumerate `Word.Templates` after

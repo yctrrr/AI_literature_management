@@ -421,6 +421,14 @@ function Test-AllRecordsAnchored($Records, [string[]]$Anchors) {
     return $true
 }
 
+function Get-RecordPropertySum($Records, [string]$PropertyName) {
+    $sum = 0
+    foreach ($record in @($Records)) {
+        $sum += [int]$record.$PropertyName
+    }
+    return $sum
+}
+
 $oldRecords = @(Get-DocxParagraphs $Before)
 $newRecords = @(Get-DocxParagraphs $After)
 $oldParts = Get-DocxPartSignatures $Before
@@ -467,10 +475,10 @@ foreach ($block in $blocks) {
         -and $oldChanged.Count -le $MaxAnchorBlockParagraphs `
         -and $newChanged.Count -le $MaxAnchorBlockParagraphs
 
-    $oldCitationFields = ($oldChanged | Measure-Object -Property CitationFieldCount -Sum).Sum
-    $newCitationFields = ($newChanged | Measure-Object -Property CitationFieldCount -Sum).Sum
-    $oldBibliographyFields = ($oldChanged | Measure-Object -Property BibliographyFieldCount -Sum).Sum
-    $newBibliographyFields = ($newChanged | Measure-Object -Property BibliographyFieldCount -Sum).Sum
+    $oldCitationFields = Get-RecordPropertySum $oldChanged 'CitationFieldCount'
+    $newCitationFields = Get-RecordPropertySum $newChanged 'CitationFieldCount'
+    $oldBibliographyFields = Get-RecordPropertySum $oldChanged 'BibliographyFieldCount'
+    $newBibliographyFields = Get-RecordPropertySum $newChanged 'BibliographyFieldCount'
     $zoteroFieldCountsPreserved = $oldCitationFields -eq $newCitationFields `
         -and $oldBibliographyFields -eq $newBibliographyFields
     $fieldBoundariesValid = @($allChanged | Where-Object { -not $_.FieldBoundaryValid }).Count -eq 0
@@ -514,10 +522,10 @@ foreach ($block in $blocks) {
         -and $anchorOldChanged.Count -le $MaxAnchorBlockParagraphs `
         -and $anchorNewChanged.Count -le $MaxAnchorBlockParagraphs
     if ($anchorPlusCitations) {
-        $anchorOldCitationFields = ($anchorOldChanged | Measure-Object -Property CitationFieldCount -Sum).Sum
-        $anchorNewCitationFields = ($anchorNewChanged | Measure-Object -Property CitationFieldCount -Sum).Sum
-        $anchorOldBibliographyFields = ($anchorOldChanged | Measure-Object -Property BibliographyFieldCount -Sum).Sum
-        $anchorNewBibliographyFields = ($anchorNewChanged | Measure-Object -Property BibliographyFieldCount -Sum).Sum
+        $anchorOldCitationFields = Get-RecordPropertySum $anchorOldChanged 'CitationFieldCount'
+        $anchorNewCitationFields = Get-RecordPropertySum $anchorNewChanged 'CitationFieldCount'
+        $anchorOldBibliographyFields = Get-RecordPropertySum $anchorOldChanged 'BibliographyFieldCount'
+        $anchorNewBibliographyFields = Get-RecordPropertySum $anchorNewChanged 'BibliographyFieldCount'
         $anchorFieldCountsPreserved = $anchorOldCitationFields -eq $anchorNewCitationFields `
             -and $anchorOldBibliographyFields -eq $anchorNewBibliographyFields
         $anchorBoundariesValid = @($anchorOldChanged + $anchorNewChanged | Where-Object { -not $_.FieldBoundaryValid }).Count -eq 0
@@ -567,7 +575,7 @@ foreach ($block in $blocks) {
                 break
             }
         }
-        if ($bibliographyOnly) {
+        if ($bibliographyOnly -and $oldChanged.Count -gt 0 -and $newChanged.Count -gt 0) {
             $oldFormats = @(($oldChanged | ForEach-Object { $_.FormatSignature }) | Sort-Object -Unique)
             $newFormats = @(($newChanged | ForEach-Object { $_.FormatSignature }) | Sort-Object -Unique)
             $oldStructures = @(($oldChanged | ForEach-Object { $_.StructuralSignature }) | Sort-Object -Unique)
@@ -575,6 +583,36 @@ foreach ($block in $blocks) {
             if (($oldFormats -join "`n") -cne ($newFormats -join "`n") `
                 -or ($oldStructures -join "`n") -cne ($newStructures -join "`n")) {
                 $bibliographyOnly = $false
+            }
+        } elseif ($bibliographyOnly -and $oldChanged.Count -eq 0) {
+            $changedIndexes = New-Object 'System.Collections.Generic.HashSet[int]'
+            foreach ($record in $newChanged) { [void]$changedIndexes.Add($record.Index) }
+            $peerRecords = @($newRecords | Where-Object {
+                $_.HasBibliography -and $_.ProseText -eq '' -and -not $changedIndexes.Contains($_.Index)
+            })
+            $peerFormats = @(($peerRecords | ForEach-Object { $_.FormatSignature }) | Sort-Object -Unique)
+            $peerStructures = @(($peerRecords | ForEach-Object { $_.StructuralSignature }) | Sort-Object -Unique)
+            foreach ($record in $newChanged) {
+                if ($peerFormats -cnotcontains $record.FormatSignature `
+                    -or $peerStructures -cnotcontains $record.StructuralSignature) {
+                    $bibliographyOnly = $false
+                    break
+                }
+            }
+        } elseif ($bibliographyOnly -and $newChanged.Count -eq 0) {
+            $changedIndexes = New-Object 'System.Collections.Generic.HashSet[int]'
+            foreach ($record in $oldChanged) { [void]$changedIndexes.Add($record.Index) }
+            $peerRecords = @($oldRecords | Where-Object {
+                $_.HasBibliography -and $_.ProseText -eq '' -and -not $changedIndexes.Contains($_.Index)
+            })
+            $peerFormats = @(($peerRecords | ForEach-Object { $_.FormatSignature }) | Sort-Object -Unique)
+            $peerStructures = @(($peerRecords | ForEach-Object { $_.StructuralSignature }) | Sort-Object -Unique)
+            foreach ($record in $oldChanged) {
+                if ($peerFormats -cnotcontains $record.FormatSignature `
+                    -or $peerStructures -cnotcontains $record.StructuralSignature) {
+                    $bibliographyOnly = $false
+                    break
+                }
             }
         }
     }

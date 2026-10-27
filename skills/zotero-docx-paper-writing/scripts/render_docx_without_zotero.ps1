@@ -10,10 +10,6 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-if (Get-Process WINWORD -ErrorAction SilentlyContinue) {
-    throw 'Close all Word windows before isolated rendering. The script refuses to attach to an existing Word session.'
-}
-
 New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
 $outputRoot = [System.IO.Path]::GetFullPath($OutputDirectory)
 $worker = Join-Path $PSScriptRoot 'render_docx_word_worker.ps1'

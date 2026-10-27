@@ -133,6 +133,55 @@ function Set-Failure([string]$Code, [int]$ExitCode, [string]$Message) {
     throw $Message
 }
 
+function Get-WordOwnerFilePath([string]$DocumentPath) {
+    $directory = [System.IO.Path]::GetDirectoryName($DocumentPath)
+    $name = [System.IO.Path]::GetFileName($DocumentPath)
+    $ownerName = if ($name.Length -gt 2) { '~$' + $name.Substring(2) } else { '~$' + $name }
+    return [System.IO.Path]::Combine($directory, $ownerName)
+}
+
+function Get-TargetDocumentLockState([string]$DocumentPath) {
+    $ownerPath = Get-WordOwnerFilePath $DocumentPath
+    if (Test-Path -LiteralPath $ownerPath) {
+        return [pscustomobject]@{
+            Available = $false
+            Reason = 'word_owner_file'
+            OwnerFile = $ownerPath
+            Error = $null
+        }
+    }
+
+    $lastError = $null
+    for ($attempt = 1; $attempt -le 3; $attempt++) {
+        $stream = $null
+        try {
+            $stream = [System.IO.File]::Open(
+                $DocumentPath,
+                [System.IO.FileMode]::Open,
+                [System.IO.FileAccess]::ReadWrite,
+                [System.IO.FileShare]::None
+            )
+            return [pscustomobject]@{
+                Available = $true
+                Reason = 'exclusive_access_confirmed'
+                OwnerFile = $ownerPath
+                Error = $null
+            }
+        } catch {
+            $lastError = $_.Exception.Message
+            if ($attempt -lt 3) { Start-Sleep -Milliseconds 200 }
+        } finally {
+            if ($null -ne $stream) { $stream.Dispose() }
+        }
+    }
+    return [pscustomobject]@{
+        Available = $false
+        Reason = 'exclusive_access_denied'
+        OwnerFile = $ownerPath
+        Error = $lastError
+    }
+}
+
 $startedAt = Get-Date
 $resolvedPath = $null
 $initialHash = $null
@@ -151,6 +200,12 @@ $mutexAcquired = $false
 $mutex = $null
 $word = $null
 $document = $null
+$wordOwned = $false
+$preexistingWordProcessIds = @()
+$newWordProcessIds = @()
+$controlledWordProcessId = $null
+$controlledWordCommandLine = $null
+$targetLockState = $null
 
 try {
     $resolvedPath = (Resolve-Path -LiteralPath $Path -ErrorAction Stop).Path
@@ -172,8 +227,9 @@ try {
         Set-Failure 'integration_command_already_guarded' 3 'Another guarded Zotero Word command is already running.'
     }
 
-    if (Get-Process WINWORD -ErrorAction SilentlyContinue) {
-        Set-Failure 'word_already_running' 2 'Close all Word instances before guarded Zotero refresh.'
+    $targetLockState = Get-TargetDocumentLockState $resolvedPath
+    if (-not $targetLockState.Available) {
+        Set-Failure 'target_document_open_or_locked' 2 ('Close only the target document before guarded Zotero refresh. Lock reason: ' + $targetLockState.Reason)
     }
     if (-not (Get-Process zotero -ErrorAction SilentlyContinue)) {
         Set-Failure 'zotero_not_running' 2 'Start Zotero before guarded Zotero refresh.'
@@ -185,7 +241,40 @@ try {
     }
 
     $initialHash = (Get-FileHash -LiteralPath $resolvedPath -Algorithm SHA256).Hash
+    $preexistingWordProcessIds = @(
+        Get-Process WINWORD -ErrorAction SilentlyContinue |
+            ForEach-Object { [int]$_.Id }
+    )
     $word = New-Object -ComObject Word.Application
+
+    $processDeadline = (Get-Date).AddSeconds(5)
+    do {
+        $currentWordProcessIds = @(
+            Get-Process WINWORD -ErrorAction SilentlyContinue |
+                ForEach-Object { [int]$_.Id }
+        )
+        $newWordProcessIds = @(
+            $currentWordProcessIds |
+                Where-Object { $preexistingWordProcessIds -notcontains $_ }
+        )
+        if ($newWordProcessIds.Count -eq 1) { break }
+        Start-Sleep -Milliseconds 100
+    } while ((Get-Date) -lt $processDeadline)
+
+    if ($newWordProcessIds.Count -ne 1) {
+        try { [void][System.Runtime.InteropServices.Marshal]::FinalReleaseComObject($word) } catch {}
+        $word = $null
+        Set-Failure 'word_process_identity_unavailable' 2 ("Expected exactly one new controlled Word process, found {0}; existing Word documents were left unchanged." -f $newWordProcessIds.Count)
+    }
+    $controlledWordProcessId = [int]$newWordProcessIds[0]
+    $controlledWordProcess = Get-CimInstance Win32_Process -Filter ("ProcessId={0}" -f $controlledWordProcessId)
+    $controlledWordCommandLine = [string]$controlledWordProcess.CommandLine
+    if ($controlledWordCommandLine -notmatch '(/Automation\b|-Embedding\b)') {
+        try { [void][System.Runtime.InteropServices.Marshal]::FinalReleaseComObject($word) } catch {}
+        $word = $null
+        Set-Failure 'word_instance_not_isolated' 2 'The new Word process was not identifiable as an automation instance. Existing Word documents were left unchanged; no refresh was attempted.'
+    }
+    $wordOwned = $true
     $word.Visible = $false
     $word.DisplayAlerts = 0
     if ($word.Documents.Count -ne 0) {
@@ -193,6 +282,9 @@ try {
     }
 
     $document = $word.Documents.Open($resolvedPath, $false, $false)
+    if ([bool]$document.ReadOnly) {
+        Set-Failure 'target_document_read_only' 2 'The target document opened read-only, indicating a lock or access conflict. No refresh was attempted.'
+    }
     $openedPath = [System.IO.Path]::GetFullPath([string]$document.FullName)
     $targetPath = [System.IO.Path]::GetFullPath($resolvedPath)
     $pathMatches = [string]::Equals($openedPath, $targetPath, [System.StringComparison]::OrdinalIgnoreCase)
@@ -267,8 +359,10 @@ try {
     $document.Save()
     $saved = $true
     $document.Close(0)
+    try { [void][System.Runtime.InteropServices.Marshal]::FinalReleaseComObject($document) } catch {}
     $document = $null
     $word.Quit()
+    try { [void][System.Runtime.InteropServices.Marshal]::FinalReleaseComObject($word) } catch {}
     $word = $null
     $finalHash = (Get-FileHash -LiteralPath $resolvedPath -Algorithm SHA256).Hash
     $resultExitCode = 0
@@ -278,9 +372,11 @@ try {
 } finally {
     if ($null -ne $document) {
         try { $document.Close(0) } catch {}
+        try { [void][System.Runtime.InteropServices.Marshal]::FinalReleaseComObject($document) } catch {}
     }
     if ($null -ne $word) {
-        try { $word.Quit() } catch {}
+        if ($wordOwned) { try { $word.Quit() } catch {} }
+        try { [void][System.Runtime.InteropServices.Marshal]::FinalReleaseComObject($word) } catch {}
     }
     if ($mutexAcquired -and $null -ne $mutex) {
         try { $mutex.ReleaseMutex() } catch {}
@@ -313,6 +409,14 @@ $report = [ordered]@{
     finalFieldState = $finalState
     warningDialogs = $warningDialogs
     observedZoteroDialogs = $observedDialogs
+    wordIsolation = [ordered]@{
+        targetLockState = $targetLockState
+        preexistingProcessIds = $preexistingWordProcessIds
+        newProcessIds = $newWordProcessIds
+        controlledProcessId = $controlledWordProcessId
+        controlledProcessCommandLine = $controlledWordCommandLine
+        controlledProcessOwned = $wordOwned
+    }
     settling = [ordered]@{
         minimumSeconds = $MinimumSettlingSeconds
         maximumSeconds = $MaximumWaitSeconds

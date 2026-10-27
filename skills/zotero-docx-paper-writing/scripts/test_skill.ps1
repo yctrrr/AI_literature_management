@@ -23,17 +23,25 @@ if ($parseErrors.Count -gt 0) {
 }
 $refreshGuardSource = Get-Content -LiteralPath $refreshGuardScript -Raw
 $guardRequirements = [ordered]@{
-    NamedMutex = 'Mutex\(\$false, ''Global[\\]Codex\.Zotero\.WordIntegration\.Guard\.v1''\)'
-    RefusesExistingWord = 'Get-Process WINWORD'
+    NamedMutex = 'Mutex\(\$false, ''Global\\Codex\.Zotero\.WordIntegration\.Guard\.v1''\)'
+    AllowsUnrelatedWord = 'preexistingWordProcessIds'
+    ChecksTargetLock = 'Get-TargetDocumentLockState'
+    VerifiesControlledProcess = 'newWordProcessIds\.Count -ne 1'
+    RejectsNonAutomationProcess = 'controlledWordCommandLine -notmatch'
+    QuitsOnlyOwnedWord = 'if \(\$wordOwned\) \{ try \{ \$word\.Quit\(\)'
+    RejectsReadOnlyTarget = '\$document\.ReadOnly'
     RequiresZotero = 'Get-Process zotero'
     DetectsZoteroDialogs = 'MozillaDialogClass'
-    DetectsKnownBusyWarning = '[\x5c]u6587[\x5c]u5B57[\x5c]u5904[\x5c]u7406[\x5c]u5668'
+    DetectsKnownBusyWarning = '\\u6587\\u5B57\\u5904\\u7406\\u5668'
     InvokesRefreshOnce = '\$word\.Run\(''ZoteroRefresh''\)'
     MinimumSettlingPeriod = '\[ValidateRange\(5, 300\)\]'
     StableFingerprint = 'consecutiveStable -ge \$StableSamples'
     RequiresDialogsToClose = 'currentDialogs\.Count -gt 0'
     FailedCloseWithoutSave = '\$document\.Close\(0\)'
     SaveAfterSettling = '\$document\.Save\(\)'
+}
+if ($refreshGuardSource -match 'Close all Word instances') {
+    throw 'Guarded refresh must not require unrelated Word documents to close.'
 }
 foreach ($requirement in $guardRequirements.GetEnumerator()) {
     $matches = [regex]::Matches($refreshGuardSource, $requirement.Value)
